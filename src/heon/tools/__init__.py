@@ -3,6 +3,8 @@ Tool registry — mirrors dexter's src/tools/registry.ts
 
 Defines all available tools with their schemas and implementations.
 Each tool is a callable that the agent can invoke.
+
+v2: Now includes run_full_analysis for programmatic pipeline execution.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import json
 from typing import Any, Callable, Awaitable
 
 from heon.data_sources import FreeFinanceAPI
+from heon.orchestrator.execution_loop import AnalysisPipeline
 
 
 # Type alias for tool functions
@@ -265,6 +268,26 @@ class ToolRegistry:
             func=self._screen_stocks,
         )
 
+        # --- NEW: Full analysis pipeline tool ---
+        self._register(
+            name="run_full_analysis",
+            description="""Run the complete HEON programmatic analysis pipeline on a stock or ETF.
+This executes all 6 phases automatically: Data Ingestion, Red Flag Scanner,
+8 Pillar Evaluation (or 7 for ETFs), Weighted Scorecard, Validation Gate,
+and Report Generation. All data is from FREE sources (Yahoo Finance, SEC EDGAR).
+Use this as the PRIMARY tool for any stock/ETF analysis request.
+Returns a complete markdown report with scores, red flags, and verdict.""",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Stock or ETF ticker symbol (e.g., 'AAPL', 'VOO', 'MSFT')"},
+                    "asset_type": {"type": "string", "description": "'stock' or 'etf'. Auto-detected if omitted.", "default": "stock"},
+                },
+                "required": ["ticker"],
+            },
+            func=self._run_full_analysis,
+        )
+
     def _register(self, name: str, description: str, parameters: dict, func: ToolFunc):
         """Register a tool with its schema and implementation."""
         self._tools[name] = {
@@ -344,3 +367,28 @@ class ToolRegistry:
 
     async def _screen_stocks(self, criteria: dict, limit: int = 25) -> list:
         return await asyncio.to_thread(self.api.screen_stocks, criteria, limit)
+
+    async def _run_full_analysis(self, ticker: str, asset_type: str = "stock") -> str:
+        """
+        Run the complete programmatic analysis pipeline.
+        Returns the full markdown report as a string.
+        """
+        ticker = ticker.upper()
+
+        # Auto-detect ETF if not explicitly set
+        if asset_type == "stock":
+            # Quick check: if ticker starts with common ETF patterns or is known ETF
+            etf_indicators = ["VOO", "QQQ", "SPY", "IVV", "VTI", "IWM", "DIA",
+                            "GLD", "TLT", "LQD", "HYG", "AGG", "BND", "VNQ",
+                            "ARKK", "ICLN", "SOXX", "SMH", "XLF", "XLE", "XLK",
+                            "XLV", "XLI", "XLP", "XLY", "XLU", "XLB", "XLC", "XLRE"]
+            if ticker in etf_indicators:
+                asset_type = "etf"
+
+        pipeline = AnalysisPipeline()
+        ctx = await pipeline.run(ticker, asset_type)
+        report = pipeline.generate_report()
+
+        # Return summary + report
+        summary = pipeline.generate_summary()
+        return f"{summary}\n\n---\n\n{report}"
