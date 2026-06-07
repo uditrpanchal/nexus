@@ -1,5 +1,5 @@
 """
-Test suite for HEON Analysis Engine.
+Test suite for NEXUS Analysis Engine.
 
 Covers:
   - Red Flag Scanner (all 3 flags, edge cases)
@@ -15,15 +15,15 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from heon.engine.red_flag_scanner import (
+from nexus.engine.red_flag_scanner import (
     RedFlagScanner, RedFlagScanResults, RedFlagResult, FlagStatus, extract_interest_coverage,
 )
-from heon.engine.pillar_evaluator import (
+from nexus.engine.pillar_evaluator import (
     StockPillarEvaluator, ETFPillarEvaluator,
     StockPillarResults, ETFPillarResults, PillarResult, PillarScore,
 )
-from heon.engine.scorecard import Scorecard, ScorecardResult, SCORING_TABLE
-from heon.engine.validation_gate import (
+from nexus.engine.scorecard import Scorecard, ScorecardResult, SCORING_TABLE
+from nexus.engine.validation_gate import (
     ValidationGate, ValidationReport, ValidationIssue,
 )
 
@@ -355,7 +355,7 @@ class TestScorecard:
 
     def make_red_flag_results(self, count, override=None):
         """Build RedFlagScanResults."""
-        from heon.engine.red_flag_scanner import RedFlagResult
+        from nexus.engine.red_flag_scanner import RedFlagResult
         results = RedFlagScanResults(ticker="TEST")
         statuses = [FlagStatus.TRIGGERED] * count + [FlagStatus.CLEAR] * (3 - count)
         for i, status in enumerate(statuses, 1):
@@ -451,7 +451,7 @@ class TestValidationGate:
             [{"operating_cash_flow": 40e9, "capital_expenditure": 10e9}],
             {"price": 150.0}, {"target_mean": 175.0}, [], {"insider_pct": 5.0},
         )
-        from heon.engine.red_flag_scanner import RedFlagResult
+        from nexus.engine.red_flag_scanner import RedFlagResult
         flags = RedFlagScanResults(ticker="TEST")
         flags.results = [
             RedFlagResult(1, "RF1", FlagStatus.CLEAR, "ok", "test", "test"),
@@ -515,7 +515,7 @@ def test_scoring_table_exists():
 
 def test_format_scorecard_table():
     """format_scorecard_table should produce readable output."""
-    from heon.engine.scorecard import format_scorecard_table
+    from nexus.engine.scorecard import format_scorecard_table
     result = ScorecardResult(
         ticker="AAPL", asset_type="stock",
         pillar_total=3.5, pillar_max=5.0, pillar_pct=70.0,

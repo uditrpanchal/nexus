@@ -431,7 +431,7 @@ class AnalysisPipeline:
             company_name = ctx.company_info.get("name", "") or ctx.company_info.get("short_name", "")
         sector = ctx.company_info.get("sector", "") if ctx.company_info and "error" not in ctx.company_info else ""
 
-        lines.append(f"# HEON Analysis: {ctx.ticker}")
+        lines.append(f"# NEXUS Analysis: {ctx.ticker}")
         if company_name:
             lines.append(f"**{company_name}** | {sector}")
         lines.append(f"*Analysis generated {time.strftime('%Y-%m-%d %H:%M UTC')}*")

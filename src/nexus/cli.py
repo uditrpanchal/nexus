@@ -1,5 +1,5 @@
 """
-HEON CLI — Rich terminal interface for the financial research agent.
+NEXUS CLI — Rich terminal interface for the financial research agent.
 
 Inspired by dexter's Ink/React CLI but built with Rich + Click for Python.
 """
@@ -31,12 +31,12 @@ console = Console()
 BANNER = r"""
 ╔══════════════════════════════════════════════════════╗
 ║                                                      ║
-║   ██╗  ██╗███████╗ ██████╗ ███╗   ██╗              ║
-║   ██║  ██║██╔════╝██╔═══██╗████╗  ██║              ║
-║   ███████║█████╗  ██║   ██║██╔██╗ ██║              ║
-║   ██╔══██║██╔══╝  ██║   ██║██║╚██╗██║              ║
-║   ██║  ██║███████╗╚████�██║██║ ╚████║              ║
-║   ╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═══╝              ║
+║   ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗     ║
+║   ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝     ║
+║   ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗     ║
+║   ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║     ║
+║   ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║     ║
+║   ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝     ║
 ║                                                      ║
 ║   Autonomous Financial Research Agent               ║
 ║   Free Data · Zero API Keys · V9 Framework          ║
@@ -48,9 +48,9 @@ BANNER = r"""
 def get_config() -> AgentConfig:
     """Load configuration from environment."""
     return AgentConfig(
-        model=os.environ.get("HEON_MODEL", "openrouter/owl-alpha"),
-        provider=os.environ.get("HEON_PROVIDER", "auto"),
-        max_iterations=int(os.environ.get("HEON_MAX_ITERATIONS", "15")),
+        model=os.environ.get("NEXUS_MODEL", "openrouter/owl-alpha"),
+        provider=os.environ.get("NEXUS_PROVIDER", "auto"),
+        max_iterations=int(os.environ.get("NEXUS_MAX_ITERATIONS", "15")),
         openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
@@ -110,7 +110,7 @@ async def run_agent_query(agent: Agent, query: str) -> str:
 @click.option("--provider", "-p", default=None, help="LLM provider (openai, anthropic, ollama, openrouter)")
 @click.option("--verbose", "-v", is_flag=True, default=True, help="Show tool calls")
 def main(query: str | None, model: str | None, provider: str | None, verbose: bool):
-    """HEON — Autonomous Financial Research Agent"""
+    """NEXUS — Autonomous Financial Research Agent"""
 
     config = get_config()
     if model:
@@ -145,7 +145,7 @@ def main(query: str | None, model: str | None, provider: str | None, verbose: bo
             "  • Or use --provider ollama for local LLMs\n\n"
             "Example:\n"
             "  export OPENAI_API_KEY=sk-...\n"
-            "  heon \"Analyze AAPL\"",
+            "  nexus \"Analyze AAPL\"",
             title="⚠ Configuration",
             border_style="red",
         ))
@@ -178,7 +178,7 @@ def main(query: str | None, model: str | None, provider: str | None, verbose: bo
 
     while True:
         try:
-            query = Prompt.ask("\n[bold cyan]HEON[/bold cyan]")
+            query = Prompt.ask("\n[bold cyan]NEXUS[/bold cyan]")
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]Goodbye![/dim]")
             break
@@ -192,7 +192,7 @@ def main(query: str | None, model: str | None, provider: str | None, verbose: bo
 
         if query.lower() == "help":
             console.print(Panel(
-                "[bold]HEON Commands:[/bold]\n\n"
+                "[bold]NEXUS Commands:[/bold]\n\n"
                 "• Type any financial question or ticker symbol\n"
                 "• 'Analyze AAPL' — full stock analysis\n"
                 "• 'Compare AAPL vs MSFT' — comparison\n"

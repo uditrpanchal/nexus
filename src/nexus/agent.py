@@ -1,5 +1,5 @@
 """
-HEON Agent Core — Inspired by dexter's agent.ts
+NEXUS Agent Core — Inspired by dexter's agent.ts
 
 Architecture:
 - Iterative tool-calling loop with max iterations
@@ -109,8 +109,8 @@ class Agent:
 
         tool_descriptions = self.tool_registry.get_compact_descriptions()
 
-        return f"""You are HEON — an autonomous financial research agent with access to live market data.
-Brand name: HEON
+        return f"""You are NEXUS — an autonomous financial research agent with access to live market data.
+Brand name: NEXUS
 
 Current date: {now}
 

@@ -1,20 +1,20 @@
-# heon
+# nexus
 
 ## Overview
 
-**heon** (헌 — Korean for "investigation / examination") is a bulletproof, zero-cost automated investment analysis engine. It programmatically executes the Universal Investment Analysis Framework — a complete analytical lifecycle covering red flag detection, pillar evaluation, weighted scorecard computation, and output validation — using only free data sources.
+**nexus** (헌 — Korean for "investigation / examination") is a bulletproof, zero-cost automated investment analysis engine. It programmatically executes the Universal Investment Analysis Framework — a complete analytical lifecycle covering red flag detection, pillar evaluation, weighted scorecard computation, and output validation — using only free data sources.
 
-Built with architectural patterns from [dexter](https://github.com/virattt/dexter) (multi-agent execution loops, micro-compaction, concurrent tool execution), heon delivers institutional-grade stock and ETF analysis with no paid API keys, no paywalls, and full arithmetic transparency.
+Built with architectural patterns from [dexter](https://github.com/virattt/dexter) (multi-agent execution loops, micro-compaction, concurrent tool execution), nexus delivers institutional-grade stock and ETF analysis with no paid API keys, no paywalls, and full arithmetic transparency.
 
 **No API keys required. No premium data subscriptions. 100% free data sources.**
 
 ## Architecture
 
-heon is organized as a decoupled, modular pipeline where each phase operates independently with clear input/output contracts:
+nexus is organized as a decoupled, modular pipeline where each phase operates independently with clear input/output contracts:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        HEON ANALYSIS PIPELINE                        │
+│                        NEXUS ANALYSIS PIPELINE                        │
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────┐    ┌──────────────────┐    ┌───────────────────────┐
@@ -79,7 +79,7 @@ graph TD
 ### Module Directory Structure
 
 ```
-src/heon/
+src/nexus/
 ├── __init__.py              # Package metadata
 ├── __main__.py              # Entry point
 ├── cli.py                   # Rich terminal interface (Click + Rich)
@@ -213,8 +213,8 @@ Inspired by dexter's agent.ts architecture:
 ## Installation
 
 ```bash
-git clone https://github.com/uditrpanchal/heon.git
-cd heon
+git clone https://github.com/uditrpanchal/nexus.git
+cd nexus
 chmod +x setup.sh && ./setup.sh
 # Or manually:
 uv sync
@@ -226,23 +226,23 @@ uv sync
 
 ```bash
 # Interactive mode
-uv run heon
+uv run nexus
 
 # Direct analysis
-uv run heon "Analyze AAPL"
+uv run nexus "Analyze AAPL"
 
 # ETF analysis
-uv run heon "Analyze VOO"
+uv run nexus "Analyze VOO"
 
 # With specific model/provider
-uv run heon --model openrouter/anthropic/claude-sonnet-4 --provider openrouter "Analyze MSFT"
+uv run nexus --model openrouter/anthropic/claude-sonnet-4 --provider openrouter "Analyze MSFT"
 ```
 
 ### Programmatic API
 
 ```python
 import asyncio
-from heon.orchestrator.execution_loop import AnalysisPipeline
+from nexus.orchestrator.execution_loop import AnalysisPipeline
 
 async def analyze(ticker):
     pipeline = AnalysisPipeline()
@@ -262,11 +262,11 @@ export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...
 export OPENROUTER_API_KEY=sk-or-...
 # Or use local Ollama
-export HEON_PROVIDER=ollama
-export HEON_MODEL=llama3.1
+export NEXUS_PROVIDER=ollama
+export NEXUS_MODEL=llama3.1
 
 # Optional
-export HEON_MAX_ITERATIONS=20
+export NEXUS_MAX_ITERATIONS=20
 ```
 
 ## Running Tests
@@ -275,7 +275,7 @@ export HEON_MAX_ITERATIONS=20
 uv run python -m pytest tests/ -v
 
 # With coverage (if installed)
-uv run python -m pytest tests/ -v --cov=heon.engine --cov=heon.orchestrator
+uv run python -m pytest tests/ -v --cov=nexus.engine --cov=nexus.orchestrator
 ```
 
 ## Design Philosophy
@@ -293,4 +293,4 @@ MIT
 
 ---
 
-*heon is not financial advice. All data comes from free public sources. Always do your own research before making investment decisions.*
+*nexus is not financial advice. All data comes from free public sources. Always do your own research before making investment decisions.*

@@ -36,14 +36,14 @@ class FreeFinanceAPI:
             timeout=30.0,
             follow_redirects=True,
             headers={
-                "User-Agent": "HeonAgent/1.0 (Financial Research)"
+                "User-Agent": "NexusAgent/1.0 (Financial Research)"
             }
         )
         self._sync_client = httpx.Client(
             timeout=30.0,
             follow_redirects=True,
             headers={
-                "User-Agent": "HeonAgent/1.0 (Financial Research)"
+                "User-Agent": "NexusAgent/1.0 (Financial Research)"
             }
         )
 
@@ -739,7 +739,7 @@ class FreeFinanceAPI:
             url = f"https://efts.sec.gov/LATEST/search-index?q=form-type%3A(%22{filing_type}%22)+AND+company%3A(%22{ticker}%22)&dateRange=custom&startdt=2020-01-01&enddt={datetime.now().strftime('%Y-%m-%d')}&page={1}"
 
             headers = {
-                "User-Agent": "HeonAgent/1.0 (Research)",
+                "User-Agent": "NexusAgent/1.0 (Research)",
                 "Accept-Encoding": "gzip, deflate",
                 "Host": "efts.sec.gov",
             }
@@ -794,7 +794,7 @@ class FreeFinanceAPI:
             url = f"https://data.sec.gov/submissions/CIK{cik}.json"
 
             headers = {
-                "User-Agent": "HeonAgent/1.0 (Research)",
+                "User-Agent": "NexusAgent/1.0 (Research)",
             }
             resp = self._sync_client.get(url, headers=headers)
 
@@ -1013,7 +1013,7 @@ class FreeFinanceAPI:
 
         try:
             url = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={}&type=&dateb=&owner=include&count=10&output=atom"
-            resp = self._sync_client.get(url.format(ticker), headers={"User-Agent": "HeonAgent/1.0"})
+            resp = self._sync_client.get(url.format(ticker), headers={"User-Agent": "NexusAgent/1.0"})
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, "xml")
                 cik_tag = soup.find("cik")

@@ -1,5 +1,5 @@
 """
-Orchestrator — Multi-agent execution loop for the HEON analysis engine.
+Orchestrator — Multi-agent execution loop for the NEXUS analysis engine.
 
 Inspired by dexter's Agent class architecture:
   - Iterative tool-calling loop with max iterations

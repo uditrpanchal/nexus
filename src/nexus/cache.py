@@ -14,7 +14,7 @@ class Cache:
 
     def __init__(self, cache_dir: str = None, default_ttl: int = 300):
         if cache_dir is None:
-            cache_dir = str(Path.home() / ".heon" / "cache")
+            cache_dir = str(Path.home() / ".nexus" / "cache")
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.default_ttl = default_ttl

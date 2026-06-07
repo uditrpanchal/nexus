@@ -1,11 +1,11 @@
 #!/bin/bash
-# HEON Setup Script
+# NEXUS Setup Script
 # Installs dependencies and verifies the installation
 
 set -e
 
 echo "╔══════════════════════════════════════╗"
-echo "║   HEON Setup — Free Financial Agent  ║"
+echo "║   NEXUS Setup — Free Financial Agent  ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
@@ -22,7 +22,7 @@ uv sync
 
 echo ""
 echo "╔══════════════════════════════════════╗"
-echo "║   ✓ HEON installed successfully!     ║"
+echo "║   ✓ NEXUS installed successfully!     ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 echo "Next steps:"
@@ -33,10 +33,10 @@ echo "     export ANTHROPIC_API_KEY=your-key-here"
 echo "     # OR"
 echo "     export OPENROUTER_API_KEY=your-key-here"
 echo "     # OR use local Ollama:"
-echo "     export HEON_PROVIDER=ollama"
-echo "     export HEON_MODEL=llama3.1"
+echo "     export NEXUS_PROVIDER=ollama"
+echo "     export NEXUS_MODEL=llama3.1"
 echo ""
-echo "  2. Run HEON:"
-echo "     uv run heon \"Analyze AAPL\""
-echo "     uv run heon  # interactive mode"
+echo "  2. Run NEXUS:"
+echo "     uv run nexus \"Analyze AAPL\""
+echo "     uv run nexus  # interactive mode"
 echo ""

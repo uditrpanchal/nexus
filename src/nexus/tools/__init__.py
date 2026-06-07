@@ -13,8 +13,8 @@ import asyncio
 import json
 from typing import Any, Callable, Awaitable
 
-from heon.data_sources import FreeFinanceAPI
-from heon.orchestrator.execution_loop import AnalysisPipeline
+from nexus.data_sources import FreeFinanceAPI
+from nexus.orchestrator.execution_loop import AnalysisPipeline
 
 
 # Type alias for tool functions
@@ -271,7 +271,7 @@ class ToolRegistry:
         # --- NEW: Full analysis pipeline tool ---
         self._register(
             name="run_full_analysis",
-            description="""Run the complete HEON programmatic analysis pipeline on a stock or ETF.
+            description="""Run the complete NEXUS programmatic analysis pipeline on a stock or ETF.
 This executes all 6 phases automatically: Data Ingestion, Red Flag Scanner,
 8 Pillar Evaluation (or 7 for ETFs), Weighted Scorecard, Validation Gate,
 and Report Generation. All data is from FREE sources (Yahoo Finance, SEC EDGAR).

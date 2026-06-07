@@ -1,5 +1,5 @@
 """
-HEON Analysis Engine — Programmatic investment analysis pipeline.
+NEXUS Analysis Engine — Programmatic investment analysis pipeline.
 
 Modules:
   - red_flag_scanner: Automated 3-flag risk detection

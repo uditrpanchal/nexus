@@ -1,5 +1,5 @@
 """
-HEON — Autonomous Financial Research Agent
+NEXUS — Autonomous Financial Research Agent
 Built with wisdom from:
   - Dexter (virattt/dexter): Agent architecture, tool design, multi-provider LLM
   - V9 Framework (udit): Value investing pillars, red flag scanner, legal hardening
