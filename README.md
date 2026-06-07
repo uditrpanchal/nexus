@@ -2,7 +2,7 @@
 
 ## Overview
 
-**nexus** (헌 — Korean for "investigation / examination") is a bulletproof, zero-cost automated investment analysis engine. It programmatically executes the Universal Investment Analysis Framework — a complete analytical lifecycle covering red flag detection, pillar evaluation, weighted scorecard computation, and output validation — using only free data sources.
+**NEXUS** — the central binding point between data and investment decision. A bulletproof, zero-cost automated investment analysis engine. It programmatically executes the Universal Investment Analysis Framework — a complete analytical lifecycle covering red flag detection, pillar evaluation, weighted scorecard computation, and output validation — using only free data sources.
 
 Built with architectural patterns from [dexter](https://github.com/virattt/dexter) (multi-agent execution loops, micro-compaction, concurrent tool execution), nexus delivers institutional-grade stock and ETF analysis with no paid API keys, no paywalls, and full arithmetic transparency.
 
