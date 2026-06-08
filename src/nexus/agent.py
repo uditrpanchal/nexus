@@ -218,7 +218,13 @@ No paid API keys required.
     async def run(self, query: str) -> AsyncGenerator[AgentEvent, str]:
         """Main agent loop — yields events for real-time UI updates."""
         start_time = time.time()
-        scratchpad = Scratchpad()
+
+        # Use enhanced scratchpad with tool limit detection
+        try:
+            from .scratchpad_enhanced import Scratchpad as EnhancedScratchpad
+            scratchpad = EnhancedScratchpad(query=query)
+        except (ImportError, AttributeError):
+            scratchpad = Scratchpad()
 
         messages: list[LLMMessage] = [
             LLMMessage(role="system", content=self.system_prompt),

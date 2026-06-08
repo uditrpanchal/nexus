@@ -105,18 +105,17 @@ class Scorecard:
         else:
             result.red_flag_deduction = red_flags.total_deduction
             tracking.append(
-                f"RED_FLAG_DEDUCTION: {result.red_flag_count} flag(s) → "
+                f"RED_FLAG_DEDUCTION: {result.red_flag_count} flag(s) -> "
                 f"{result.red_flag_deduction:+.1f} points"
             )
 
-        # Step 3: Final score
+        # Step 3: Final score (V10 penalty schedule)
         if result.flag_override == "AVOID":
             result.final_score = 0.0
             result.final_pct = 0.0
             result.verdict = "AVOID"
-            result.star_rating = "★"
+            result.star_rating = "\u2605"
         else:
-            # Deduction is applied to the final percentage
             result.final_pct = result.pillar_pct + (result.red_flag_deduction * 10)
             result.final_pct = max(0.0, min(100.0, result.final_pct))
             result.final_score = result.final_pct
@@ -126,7 +125,6 @@ class Scorecard:
                 f"({result.red_flag_deduction:.1f} * 10) = {result.final_pct:.2f}%"
             )
 
-            # Step 4: Verdict
             if result.final_pct >= Scorecard.BUY_THRESHOLD and result.red_flag_count == 0:
                 result.verdict = "BUY"
             elif result.final_pct >= Scorecard.BUY_THRESHOLD and result.red_flag_count == 1:
@@ -136,9 +134,7 @@ class Scorecard:
             else:
                 result.verdict = "AVOID"
 
-            # Step 5: Star rating
             result.star_rating = Scorecard._compute_stars(result.final_pct)
-
             tracking.append(
                 f"VERDICT: {result.verdict} | "
                 f"RATING: {result.star_rating} | "

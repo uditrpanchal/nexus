@@ -64,7 +64,7 @@ class ValidationGate:
     # Required counts
     STOCK_PILLAR_COUNT = 8
     ETF_PILLAR_COUNT = 7
-    RED_FLAG_COUNT = 3
+    RED_FLAG_COUNT = 4
 
     def validate_stock(
         self,

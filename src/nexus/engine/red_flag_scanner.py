@@ -1,16 +1,19 @@
 """
 Red Flag Scanner — Automated sequential risk detection for stock analysis.
 
-Implements the Universal Investment Analysis Framework's 3 Red Flags:
-  Red Flag 1: Revenue and Net Income decline across 3-4 trailing quarters
-  Red Flag 2: Balance sheet stress — Debt/Equity > 2.0 AND Interest Coverage < 1.5
-  Red Flag 3: Cash flow validation — TTM Free Cash Flow (OCF - CapEx) negative
+V10 upgrade:
+- 4 Red Flags instead of 3:
+  RF1: Revenue and Net Income decline across 3-4 trailing quarters OR 2+ earnings misses
+  RF2: Balance sheet stress — D/E > 2.0 AND Interest Coverage < 1.5
+  RF3: Poor Cash Flow Quality — OCF negative 2+ quarters OR Adjusted FCF (OCF-CapEx-SBC) negative
+  RF4: Capital Destruction — ROIC < WACC (negative Economic Spread)
 
-Scoring:
+Penalty Schedule (V10):
   - 0 flags: No deduction
-  - 1 flag:  -0.5 from final score
-  - 2 flags: -1.0 from final score
-  - 3 flags: Automatic AVOID verdict (overrides all other scores)
+  - 1 flag:  No penalty (note in verdict)
+  - 2 flags: -1.0 from final weighted score + MULTI-RED-FLAG WARNING + downgrade rating
+  - 3 flags: -2.0 from final weighted score + downgrade 2 tiers
+  - 4 flags: Automatic AVOID verdict (overrides all pillar scores)
 """
 
 from __future__ import annotations
@@ -40,12 +43,13 @@ class RedFlagResult:
 
 @dataclass
 class RedFlagScanResults:
-    """Aggregate results from all 3 red flag checks."""
+    """Aggregate results from all 4 red flag checks."""
     ticker: str
     results: list[RedFlagResult] = field(default_factory=list)
     total_flags_triggered: int = 0
     total_deduction: float = 0.0
-    verdict_override: Optional[str] = None  # "AVOID" if 3 flags triggered
+    verdict_override: Optional[str] = None  # "AVOID" if 4 flags triggered
+    score_penalty: float = 0.0  # V10: 2 flags = -1.0, 3 flags = -2.0
 
     @property
     def is_avoid(self) -> bool:
@@ -54,8 +58,8 @@ class RedFlagScanResults:
     @property
     def summary(self) -> str:
         lines = [f"Red Flag Scan: {self.ticker}"]
-        lines.append(f"  Flags triggered: {self.total_flags_triggered}/3")
-        lines.append(f"  Score deduction: {self.total_deduction}")
+        lines.append(f"  Flags triggered: {self.total_flags_triggered}/4")
+        lines.append(f"  Score penalty: {self.score_penalty}")
         if self.verdict_override:
             lines.append(f"  VERDICT OVERRIDE: {self.verdict_override}")
         for r in self.results:
@@ -66,23 +70,28 @@ class RedFlagScanResults:
 
 class RedFlagScanner:
     """
-    Sequential validator for the 3 Red Flags in the Universal Investment
-    Analysis Framework. Works with data from FreeFinanceAPI.
-
-    Usage:
-        scanner = RedFlagScanner()
-        results = scanner.scan(ticker, income_data, balance_data, cashflow_data)
+    Sequential validator for the 4 Red Flags per V10 framework.
     """
 
     # Thresholds
     DEBT_TO_EQUITY_THRESHOLD = 2.0
     INTEREST_COVERAGE_THRESHOLD = 1.5
-    QUARTERS_TO_CHECK = 4  # trailing quarters for RF1
+    QUARTERS_TO_CHECK = 4
+    EARNINGS_MISS_THRESHOLD = 2  # 2+ misses triggers RF1
+    SBC_DRAG_THRESHOLD = 0.15  # 15% SBC drag triggers RF3
+    OCF_NEGATIVE_QUARTERS = 2  # 2+ consecutive OCF negative
 
-    # Deduction schedule
-    DEDUCTION_1_FLAG = -0.5
-    DEDUCTION_2_FLAGS = -1.0
-    DEDUCTION_3_FLAGS = "AVOID"  # special override
+    # V10 Penalty schedule
+    def compute_penalty(self, flags_triggered: int) -> tuple[float, Optional[str]]:
+        """V10: 1 flag = no penalty, 2 flags = -1.0, 3 flags = -2.0, 4 flags = AVOID."""
+        if flags_triggered >= 4:
+            return float("-inf"), "AVOID"
+        elif flags_triggered == 3:
+            return -2.0, None
+        elif flags_triggered == 2:
+            return -1.0, None
+        else:
+            return 0.0, None
 
     def scan(
         self,
@@ -92,17 +101,27 @@ class RedFlagScanner:
         cash_flow_statements: list[dict[str, Any]],
         interest_expense: Optional[float] = None,
         ebit: Optional[float] = None,
+        stock_based_compensation: Optional[float] = None,
+        roic: Optional[float] = None,
+        wacc: Optional[float] = None,
+        earnings_misses: int = 0,
+        sbc_ttm: Optional[float] = None,
     ) -> RedFlagScanResults:
         """
-        Run all 3 red flag checks sequentially.
+        Run all 4 red flag checks sequentially.
 
         Args:
             ticker: Stock ticker symbol
             income_statements: Quarterly income statements (min 4 quarters)
             balance_sheets: Quarterly balance sheets (min 1)
-            cash_flow_statements: Quarterly cash flow statements (min 4 quarters for TTM)
-            interest_expense: Manual override for interest expense (from income statement)
-            ebit: Manual override for EBIT (from income statement)
+            cash_flow_statements: Quarterly cash flow statements (min 4 quarters)
+            interest_expense: Interest expense from income statement
+            ebit: EBIT from income statement
+            stock_based_compensation: SBC value for RF3 adjustment
+            roic: Return on Invested Capital for RF4
+            wacc: Weighted Average Cost of Capital for RF4
+            earnings_misses: Count of earnings misses in last 4 quarters (for RF1)
+            sbc_ttm: TTM Stock-Based Compensation for SBC drag calc
         """
         results = RedFlagScanResults(ticker=ticker)
 
@@ -111,139 +130,122 @@ class RedFlagScanner:
         balance = [s for s in balance_sheets if "error" not in s]
         cashflow = [s for s in cash_flow_statements if "error" not in s]
 
-        # Red Flag 1: Revenue & Net Income tracking
-        rf1 = self._check_revenue_income_decline(ticker, income)
+        # Red Flag 1: Revenue & Net Income decline + earnings misses
+        rf1 = self._check_revenue_income_decline(ticker, income, earnings_misses)
         results.results.append(rf1)
 
         # Red Flag 2: Balance sheet health
         rf2 = self._check_balance_sheet_health(ticker, balance, interest_expense, ebit)
         results.results.append(rf2)
 
-        # Red Flag 3: Free Cash Flow validation
-        rf3 = self._check_free_cash_flow(ticker, cashflow)
+        # Red Flag 3: Cash flow quality with SBC adjustment
+        rf3 = self._check_cash_flow_quality(ticker, cashflow, sbc_ttm)
         results.results.append(rf3)
 
-        # Compute aggregate
+        # Red Flag 4 (NEW): Capital Destruction — ROIC < WACC
+        rf4 = self._check_capital_destruction(ticker, roic, wacc)
+        results.results.append(rf4)
+
+        # Compute aggregate with V10 penalty schedule
         triggered = [r for r in results.results if r.status == FlagStatus.TRIGGERED]
         results.total_flags_triggered = len(triggered)
-
-        if results.total_flags_triggered >= 3:
-            results.total_deduction = float("-inf")  # practical sentinel
-            results.verdict_override = "AVOID"
-        elif results.total_flags_triggered == 2:
-            results.total_deduction = self.DEDUCTION_2_FLAGS
-        elif results.total_flags_triggered == 1:
-            results.total_deduction = self.DEDUCTION_1_FLAG
+        penalty, override = self.compute_penalty(results.total_flags_triggered)
+        results.score_penalty = penalty
+        results.verdict_override = override
+        if override == "AVOID":
+            results.total_deduction = float("-inf")
         else:
-            results.total_deduction = 0.0
+            results.total_deduction = penalty
 
         return results
 
     # ------------------------------------------------------------------
-    # RED FLAG 1: Revenue & Net Income Decline
+    # RED FLAG 1: Declining Revenue or Earnings (V10: + earnings misses)
     # ------------------------------------------------------------------
 
     def _check_revenue_income_decline(
-        self, ticker: str, income: list[dict[str, Any]]
+        self, ticker: str, income: list[dict[str, Any]], earnings_misses: int = 0
     ) -> RedFlagResult:
         """
-        Check if revenue AND net income are declining across 3-4 trailing quarters.
-
-        Algorithm: For each quarter pair (current vs prior), check direction.
-        If both revenue and net income decline in >= 2 of the last 3 quarter pairs,
-        flag is triggered.
+        V10: Trigger if:
+          - Revenue AND net income declining for 3+ consecutive quarters OR
+          - 2+ consecutive earnings misses relative to consensus
         """
+        decline_triggered = False
+        details_parts = []
+        actual_parts = []
+
+        # Part A: Revenue & Net Income trend
         if len(income) < 4:
-            return RedFlagResult(
-                flag_number=1,
-                flag_name="Revenue & Net Income Decline",
-                status=FlagStatus.WARNING,
-                details=f"Insufficient data: only {len(income)} quarterly periods available (need 4)",
-                threshold="Both revenue AND net income declining in 2+ of last 3 QoQ comparisons",
-                actual_value=f"Data points: {len(income)}",
-            )
+            # Less than 4 quarters: partial check
+            decline_triggered = False
+            details_parts.append(f"Insufficient data: {len(income)} quarters (need 4)")
+        else:
+            recent = income[:4]
+            revenues = []
+            net_incomes = []
+            for q in recent:
+                rev = q.get("revenue")
+                ni = q.get("net_income")
+                revenues.append(float(rev) if rev is not None else None)
+                net_incomes.append(float(ni) if ni is not None else None)
 
-        # Use most recent 4 quarters, ordered newest-first
-        recent = income[:4]
+            # Check QoQ dual-declines (V10: need 3+ consecutive quarters)
+            consecutive_declines = 0
+            max_consecutive = 0
+            for i in range(len(revenues) - 1):
+                r_curr, r_prev = revenues[i], revenues[i + 1]
+                ni_curr, ni_prev = net_incomes[i], net_incomes[i + 1]
+                if r_curr is not None and r_prev is not None and ni_curr is not None and ni_prev is not None:
+                    if r_curr < r_prev and ni_curr < ni_prev:
+                        consecutive_declines += 1
+                        max_consecutive = max(max_consecutive, consecutive_declines)
+                    else:
+                        consecutive_declines = 0
 
-        # Extract revenue and net income for each quarter
-        revenues = []
-        net_incomes = []
-        for q in recent:
-            rev = q.get("revenue")
-            ni = q.get("net_income")
-            if rev is not None:
-                revenues.append(float(rev))
-            else:
-                revenues.append(None)
-            if ni is not None:
-                net_incomes.append(float(ni))
-            else:
-                net_incomes.append(None)
-
-        # Check QoQ comparisons (newest vs prior)
-        decline_count = 0
-        decline_details = []
-
-        for i in range(len(revenues) - 1):
-            rev_curr = revenues[i]
-            rev_prev = revenues[i + 1]
-            ni_curr = net_incomes[i]
-            ni_prev = net_incomes[i + 1]
-
-            if rev_curr is None or rev_prev is None or ni_curr is None or ni_prev is None:
-                continue
-
-            rev_declined = rev_curr < rev_prev
-            ni_declined = ni_curr < ni_prev
-
-            if rev_declined and ni_declined:
-                decline_count += 1
-                pct_rev = ((rev_curr - rev_prev) / abs(rev_prev)) * 100 if rev_prev != 0 else 0
-                pct_ni = ((ni_curr - ni_prev) / abs(ni_prev)) * 100 if ni_prev != 0 else 0
-                decline_details.append(
-                    f"Q{i}→Q{i+1}: Rev {pct_rev:.1f}%, NI {pct_ni:.1f}%"
+            if max_consecutive >= 3:
+                decline_triggered = True
+                details_parts.append(
+                    f"Revenue AND net income declining for {max_consecutive} consecutive quarters"
                 )
 
-        # Build actual value string
-        if revenues[0] and net_incomes[0]:
-            actual = f"Latest Q Rev: ${revenues[0]:,.0f}, NI: ${net_incomes[0]:,.0f}; "
-            actual += f"{decline_count}/3 QoQ dual-declines"
-        else:
-            actual = f"{decline_count}/3 QoQ dual-declines"
+            rev_str = f"Rev: ${revenues[0]:,.0f}" if revenues[0] else "Rev: N/A"
+            ni_str = f"NI: ${net_incomes[0]:,.0f}" if net_incomes[0] else "NI: N/A"
+            actual_parts.append(f"{rev_str}, {ni_str}")
+            actual_parts.append(f"{max_consecutive}/3 consecutive dual-declines")
 
-        if decline_count >= 2:
+        # Part B: Earnings misses (V10 addition)
+        if earnings_misses >= 2:
+            details_parts.append(f"{earnings_misses} earnings misses in last 4 quarters (threshold: 2)")
+            if not decline_triggered:
+                decline_triggered = True
+
+        actual_parts.append(f"Earnings misses: {earnings_misses}")
+
+        actual = " | ".join(actual_parts)
+        details = "; ".join(details_parts)
+
+        if decline_triggered:
             return RedFlagResult(
                 flag_number=1,
-                flag_name="Revenue & Net Income Decline",
+                flag_name="Declining Revenue or Earnings",
                 status=FlagStatus.TRIGGERED,
-                details=f"Dual revenue+net income decline in {decline_count} of last 3 QoQ comparisons: "
-                        f"{'; '.join(decline_details)}" if decline_details else "",
-                threshold="< 2 dual-decline quarters out of 3",
-                actual_value=actual,
-                deduction=0.0,  # aggregate at top level
-            )
-        elif decline_count == 1:
-            return RedFlagResult(
-                flag_number=1,
-                flag_name="Revenue & Net Income Decline",
-                status=FlagStatus.WARNING,
-                details="One dual-decline quarter detected. Monitor closely.",
-                threshold="< 2 dual-decline quarters out of 3",
+                details=details or "Multiple trigger conditions met",
+                threshold="3+ consecutive dual-declines OR 2+ earnings misses",
                 actual_value=actual,
             )
         else:
             return RedFlagResult(
                 flag_number=1,
-                flag_name="Revenue & Net Income Decline",
+                flag_name="Declining Revenue or Earnings",
                 status=FlagStatus.CLEAR,
-                details="No dual revenue+net income decline pattern detected.",
-                threshold="< 2 dual-decline quarters out of 3",
+                details=details or "No sustained decline pattern detected",
+                threshold="3+ consecutive dual-declines OR 2+ earnings misses",
                 actual_value=actual,
             )
 
     # ------------------------------------------------------------------
-    # RED FLAG 2: Balance Sheet Health (Debt/Equity + Interest Coverage)
+    # RED FLAG 2: High Debt Levels (no change from V9)
     # ------------------------------------------------------------------
 
     def _check_balance_sheet_health(
@@ -253,15 +255,11 @@ class RedFlagScanner:
         interest_expense: Optional[float] = None,
         ebit: Optional[float] = None,
     ) -> RedFlagResult:
-        """
-        Check if Debt-to-Equity > 2.0 AND Interest Coverage Ratio < 1.5.
-
-        The flag triggers ONLY when BOTH conditions are met simultaneously.
-        """
+        """V10: D/E > 2.0 AND Interest Coverage Ratio < 1.5."""
         if not balance:
             return RedFlagResult(
                 flag_number=2,
-                flag_name="Balance Sheet Stress",
+                flag_name="High Debt Levels",
                 status=FlagStatus.WARNING,
                 details="No balance sheet data available.",
                 threshold="D/E < 2.0 AND ICR > 1.5",
@@ -269,16 +267,13 @@ class RedFlagScanner:
             )
 
         latest = balance[0]
-
         total_debt = latest.get("total_debt")
         total_equity = latest.get("total_equity")
 
-        # Compute D/E
         de_ratio = None
         if total_debt is not None and total_equity is not None and total_equity != 0:
             de_ratio = float(total_debt) / float(total_equity)
 
-        # Compute Interest Coverage Ratio (ICR) = EBIT / Interest Expense
         icr = None
         if ebit is not None and interest_expense is not None and interest_expense != 0:
             icr = float(ebit) / float(interest_expense)
@@ -292,147 +287,179 @@ class RedFlagScanner:
 
         if de_triggered and icr_triggered:
             return RedFlagResult(
-                flag_number=2,
-                flag_name="Balance Sheet Stress",
+                flag_number=2, flag_name="High Debt Levels",
                 status=FlagStatus.TRIGGERED,
-                details=f"Both conditions met: D/E {de_ratio:.2f} > {self.DEBT_TO_EQUITY_THRESHOLD} "
-                        f"AND ICR {icr:.2f} < {self.INTEREST_COVERAGE_THRESHOLD}",
+                details=f"D/E {de_ratio:.2f} > {self.DEBT_TO_EQUITY_THRESHOLD} AND ICR {icr:.2f} < {self.INTEREST_COVERAGE_THRESHOLD}",
                 threshold=f"D/E <= {self.DEBT_TO_EQUITY_THRESHOLD} AND ICR >= {self.INTEREST_COVERAGE_THRESHOLD}",
                 actual_value=actual,
             )
         elif de_triggered:
             return RedFlagResult(
-                flag_number=2,
-                flag_name="Balance Sheet Stress",
+                flag_number=2, flag_name="High Debt Levels",
                 status=FlagStatus.WARNING,
-                details=f"D/E {de_ratio:.2f} exceeds {self.DEBT_TO_EQUITY_THRESHOLD}, but ICR is acceptable.",
+                details=f"D/E {de_ratio:.2f} exceeds {self.DEBT_TO_EQUITY_THRESHOLD}, ICR acceptable.",
                 threshold=f"D/E <= {self.DEBT_TO_EQUITY_THRESHOLD} AND ICR >= {self.INTEREST_COVERAGE_THRESHOLD}",
                 actual_value=actual,
             )
         elif icr_triggered:
             return RedFlagResult(
-                flag_number=2,
-                flag_name="Balance Sheet Stress",
+                flag_number=2, flag_name="High Debt Levels",
                 status=FlagStatus.WARNING,
-                details=f"ICR {icr:.2f} below {self.INTEREST_COVERAGE_THRESHOLD}, but D/E is acceptable.",
+                details=f"ICR {icr:.2f} below {self.INTEREST_COVERAGE_THRESHOLD}, D/E acceptable.",
                 threshold=f"D/E <= {self.DEBT_TO_EQUITY_THRESHOLD} AND ICR >= {self.INTEREST_COVERAGE_THRESHOLD}",
                 actual_value=actual,
             )
         else:
             return RedFlagResult(
-                flag_number=2,
-                flag_name="Balance Sheet Stress",
+                flag_number=2, flag_name="High Debt Levels",
                 status=FlagStatus.CLEAR,
-                details="Both D/E and ICR within acceptable ranges.",
+                details="Both D/E and ICR within ranges.",
                 threshold=f"D/E <= {self.DEBT_TO_EQUITY_THRESHOLD} AND ICR >= {self.INTEREST_COVERAGE_THRESHOLD}",
                 actual_value=actual,
             )
 
     # ------------------------------------------------------------------
-    # RED FLAG 3: Free Cash Flow Validation
+    # RED FLAG 3: Poor Cash Flow Quality (V10: + SBC adjustment)
     # ------------------------------------------------------------------
 
-    def _check_free_cash_flow(
-        self, ticker: str, cashflow: list[dict[str, Any]]
+    def _check_cash_flow_quality(
+        self, ticker: str, cashflow: list[dict[str, Any]], sbc_ttm: Optional[float] = None
     ) -> RedFlagResult:
         """
-        Verify TTM Free Cash Flow = Operating Cash Flow - Capital Expenditure.
-
-        Flag triggers if TTM FCF is negative (sum of last 4 quarters).
+        V10: Trigger if:
+          - OCF negative for 2+ consecutive quarters OR
+          - Adjusted FCF (OCF - CapEx - SBC) negative over TTM
         """
         if not cashflow:
             return RedFlagResult(
-                flag_number=3,
-                flag_name="Negative Free Cash Flow",
+                flag_number=3, flag_name="Poor Cash Flow Quality",
                 status=FlagStatus.WARNING,
                 details="No cash flow data available.",
-                threshold="TTM FCF > 0",
+                threshold="Adjusted FCF > 0 (OCF - CapEx - SBC)",
                 actual_value="No data",
             )
 
-        # Sum TTM (last 4 quarters) OCF and CapEx
         recent = cashflow[:4]
-
         ttm_ocf = 0.0
         ttm_capex = 0.0
-        valid_quarters = 0
+        negative_quarters = 0
+        valid = 0
 
         for q in recent:
             ocf = q.get("operating_cash_flow")
             capex = q.get("capital_expenditure")
             if ocf is not None:
                 ttm_ocf += float(ocf)
-                valid_quarters += 1
+                valid += 1
+                if float(ocf) < 0:
+                    negative_quarters += 1
             if capex is not None:
                 ttm_capex += float(capex)
 
-        ttm_fcf = ttm_ocf - ttm_capex
+        ttm_raw_fcf = ttm_ocf - ttm_capex
+        sbc = float(sbc_ttm) if sbc_ttm is not None else 0.0
+        ttm_adjusted_fcf = ttm_raw_fcf - sbc
+
+        sbc_drag_pct = (sbc / ttm_raw_fcf * 100) if ttm_raw_fcf and ttm_raw_fcf != 0 else 0.0
 
         actual = (
             f"TTM OCF: ${ttm_ocf:,.0f}, "
-            f"TTM CapEx: ${ttm_capex:,.0f}, "
-            f"TTM FCF: ${ttm_fcf:,.0f} "
-            f"({valid_quarters}/4 quarters)"
+            f"CapEx: ${ttm_capex:,.0f}, "
+            f"SBC: ${sbc:,.0f}, "
+            f"Raw FCF: ${ttm_raw_fcf:,.0f}, "
+            f"Adjusted FCF: ${ttm_adjusted_fcf:,.0f}, "
+            f"SBC Drag: {sbc_drag_pct:.1f}%, "
+            f"OCF negative quarters: {negative_quarters}/{valid}"
         )
 
-        if valid_quarters < 2:
-            return RedFlagResult(
-                flag_number=3,
-                flag_name="Negative Free Cash Flow",
-                status=FlagStatus.WARNING,
-                details=f"Insufficient quarterly data: {valid_quarters}/4 quarters available.",
-                threshold="TTM FCF > 0",
-                actual_value=actual,
-            )
+        ocf_negative = negative_quarters >= self.OCF_NEGATIVE_QUARTERS
+        adj_fcf_negative = ttm_adjusted_fcf < 0
 
-        if ttm_fcf < 0:
-            # Check if it's a single-quarter dip or persistent
-            negative_quarters = sum(
-                1 for q in recent
-                if q.get("free_cash_flow") is not None and float(q.get("free_cash_flow", 0)) < 0
-            )
-            severity = "persistent" if negative_quarters >= 3 else "recent"
+        if ocf_negative or adj_fcf_negative:
+            reasons = []
+            if ocf_negative:
+                reasons.append(f"OCF negative for {negative_quarters} quarters")
+            if adj_fcf_negative:
+                reasons.append(f"Adjusted FCF negative: ${ttm_adjusted_fcf:,.0f}")
             return RedFlagResult(
-                flag_number=3,
-                flag_name="Negative Free Cash Flow",
+                flag_number=3, flag_name="Poor Cash Flow Quality",
                 status=FlagStatus.TRIGGERED,
-                details=f"TTM FCF is negative ({severity}: {negative_quarters}/4 quarters negative). "
-                        f"Company is burning cash.",
-                threshold="TTM FCF > 0",
+                details="; ".join(reasons),
+                threshold="OCF positive 3+ quarters AND Adjusted FCF > 0",
                 actual_value=actual,
             )
         else:
             return RedFlagResult(
-                flag_number=3,
-                flag_name="Negative Free Cash Flow",
+                flag_number=3, flag_name="Poor Cash Flow Quality",
                 status=FlagStatus.CLEAR,
-                details=f"TTM FCF positive at ${ttm_fcf:,.0f}.",
-                threshold="TTM FCF > 0",
+                details=f"Cash flow healthy: Adjusted FCF ${ttm_adjusted_fcf:,.0f}",
+                threshold="OCF positive 3+ quarters AND Adjusted FCF > 0",
+                actual_value=actual,
+            )
+
+    # ------------------------------------------------------------------
+    # RED FLAG 4 (NEW): Capital Destruction — ROIC < WACC
+    # ------------------------------------------------------------------
+
+    def _check_capital_destruction(
+        self, ticker: str, roic: Optional[float], wacc: Optional[float]
+    ) -> RedFlagResult:
+        """
+        V10: Trigger if ROIC < WACC (negative Economic Spread).
+        The company is destroying economic value.
+        """
+        if roic is None or wacc is None:
+            return RedFlagResult(
+                flag_number=4, flag_name="Capital Destruction",
+                status=FlagStatus.WARNING,
+                details="ROIC or WACC data not available. Cannot compute Economic Spread.",
+                threshold="ROIC >= WACC",
+                actual_value=f"ROIC: {'N/A' if roic is None else f'{roic:.1%}'}, "
+                            f"WACC: {'N/A' if wacc is None else f'{wacc:.1%}'}",
+            )
+
+        economic_spread = roic - wacc
+        actual = f"ROIC: {roic:.1%}, WACC: {wacc:.1%}, Spread: {economic_spread:+.1%}"
+
+        if economic_spread < 0:
+            return RedFlagResult(
+                flag_number=4, flag_name="Capital Destruction",
+                status=FlagStatus.TRIGGERED,
+                details=f"ROIC ({roic:.1%}) < WACC ({wacc:.1%}). Economic Spread: {economic_spread:.1%} — capital is being destroyed.",
+                threshold="ROIC >= WACC (positive Economic Spread)",
+                actual_value=actual,
+            )
+        elif economic_spread < 0.02:
+            return RedFlagResult(
+                flag_number=4, flag_name="Capital Destruction",
+                status=FlagStatus.WARNING,
+                details=f"ROIC barely covers WACC. Spread: {economic_spread:.1%} — close to destruction line.",
+                threshold="ROIC >= WACC (positive Economic Spread)",
+                actual_value=actual,
+            )
+        else:
+            return RedFlagResult(
+                flag_number=4, flag_name="Capital Destruction",
+                status=FlagStatus.CLEAR,
+                details=f"ROIC ({roic:.1%}) > WACC ({wacc:.1%}). Positive Economic Spread. Value creation.",
+                threshold="ROIC >= WACC (positive Economic Spread)",
                 actual_value=actual,
             )
 
 
-# ------------------------------------------------------------------
 # Convenience: compute ICR from income statement data
-# ------------------------------------------------------------------
-
-def extract_interest_coverage(income: list[dict[str, Any]]) -> tuple[Optional[float], Optional[float]]:
+def extract_interest_coverage(income: list[dict]) -> tuple[float | None, float | None]:
     """
     Extract EBIT and Interest Expense from income statements.
     Returns (ebit, interest_expense) from the most recent period.
     """
     if not income:
         return None, None
-
     latest = income[0]
     ebit = latest.get("ebit")
     interest = latest.get("interest_expense")
-
-    # yfinance doesn't always have interest_expense directly;
-    # check for it under different names
     if interest is None:
         interest = latest.get("interestExpense") or latest.get("Interest Expense")
-
     return (
         float(ebit) if ebit is not None else None,
         float(interest) if interest is not None else None,

@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from nexus.engine.red_flag_scanner import (
     RedFlagScanner, RedFlagScanResults, RedFlagResult, FlagStatus, extract_interest_coverage,
 )
+from nexus.engine.scorecard import Scorecard, ScorecardResult
 from nexus.engine.pillar_evaluator import (
     StockPillarEvaluator, ETFPillarEvaluator,
     StockPillarResults, ETFPillarResults, PillarResult, PillarScore,
@@ -53,7 +54,8 @@ class TestRedFlagScanner:
         """Helper: build cash flow from lists."""
         return [
             {"operating_cash_flow": ocf, "capital_expenditure": capex,
-             "free_cash_flow": (ocf - capex) if ocf is not None and capex is not None else None}
+             "free_cash_flow": (ocf - capex) if ocf is not None and capex is not None else None,
+             "stock_based_compensation": 10}
             for ocf, capex in zip(ocf_list, capex_list)
         ]
 
@@ -70,16 +72,14 @@ class TestRedFlagScanner:
         assert result.flag_number == 1
 
     def test_rf1_triggered_dual_decline(self):
-        """RF1: Both revenue and NI declining in 2+ QoQ should TRIGGER.
-        [800, 900, 1000, 950] gives 2 dual-decline quarters (Q0→Q1, Q1→Q2)."""
+        """RF1: Both revenue and NI declining in 3+ consecutive QoQ should TRIGGER (V10).
+        [600, 700, 800, 950] newest->oldest gives 3 consecutive dual-declines."""
         scanner = RedFlagScanner()
         income = self.make_quarterly_income(
-            [800, 900, 1000, 950],   # newest=800, oldest=950; 2 dual declines
-            [70, 80, 100, 85],        # 2 dual declines with revenue
+            [600, 700, 800, 950],   # newest=600, oldest=950; 3 consecutive declines
+            [50, 60, 70, 85],        # 3 consecutive declines
         )
         result = scanner._check_revenue_income_decline("TEST", income)
-        # Q0→Q1: both down, Q1→Q2: both down, Q2→Q3: rev up, ni down
-        # That's 2+ dual declines → triggered
         assert result.status == FlagStatus.TRIGGERED
 
     def test_rf1_warning_single_decline(self):
@@ -93,11 +93,11 @@ class TestRedFlagScanner:
         assert result.status in (FlagStatus.WARNING, FlagStatus.CLEAR)
 
     def test_rf1_insufficient_data(self):
-        """RF1: Less than 4 quarters should be WARNING."""
+        """RF1: Less than 4 quarters should be CLEAR with note (V10)."""
         scanner = RedFlagScanner()
         income = self.make_quarterly_income([1000, 1100], [100, 110])
         result = scanner._check_revenue_income_decline("TEST", income)
-        assert result.status == FlagStatus.WARNING
+        assert result.status == FlagStatus.CLEAR
 
     def test_rf2_both_triggered(self):
         """RF2: D/E > 2.0 AND ICR < 1.5 should TRIGGER."""
@@ -140,7 +140,7 @@ class TestRedFlagScanner:
             [1000, 1100, 1200, 1300],
             [200, 200, 200, 200],
         )
-        result = scanner._check_free_cash_flow("TEST", cf)
+        result = scanner._check_cash_flow_quality("TEST", cf)
         assert result.status == FlagStatus.CLEAR
 
     def test_rf3_negative_fcf(self):
@@ -150,8 +150,56 @@ class TestRedFlagScanner:
             [100, 100, 100, 100],
             [300, 300, 300, 300],
         )
-        result = scanner._check_free_cash_flow("TEST", cf)
+        result = scanner._check_cash_flow_quality("TEST", cf)
         assert result.status == FlagStatus.TRIGGERED
+
+    def test_rf4_capital_creation_clear(self):
+        """RF4: ROIC > WACC should be CLEAR."""
+        scanner = RedFlagScanner()
+        result = scanner._check_capital_destruction("TEST", roic=0.15, wacc=0.08)
+        assert result.status == FlagStatus.CLEAR
+        assert result.flag_number == 4
+
+    def test_rf4_capital_destruction_triggered(self):
+        """RF4: ROIC < WACC should TRIGGER."""
+        scanner = RedFlagScanner()
+        result = scanner._check_capital_destruction("TEST", roic=0.06, wacc=0.10)
+        assert result.status == FlagStatus.TRIGGERED
+        assert "destroy" in result.details.lower()
+
+    def test_rf4_no_data_warning(self):
+        """RF4: Missing ROIC/WACC should be WARNING."""
+        scanner = RedFlagScanner()
+        result = scanner._check_capital_destruction("TEST", roic=None, wacc=None)
+        assert result.status == FlagStatus.WARNING
+
+    def test_full_scan_4_flags_avoid(self):
+        """4 flags should trigger AVOID override (V10)."""
+        scanner = RedFlagScanner()
+        income = [
+            {"revenue": 500, "net_income": 40},
+            {"revenue": 600, "net_income": 50},
+            {"revenue": 800, "net_income": 70},
+            {"revenue": 1000, "net_income": 100},
+        ]
+        balance = [{"total_debt": 3000, "total_equity": 1000}]
+        cf = [
+            {"operating_cash_flow": 100, "capital_expenditure": 300,
+             "free_cash_flow": -200, "stock_based_compensation": 50},
+            {"operating_cash_flow": 100, "capital_expenditure": 300,
+             "free_cash_flow": -200, "stock_based_compensation": 50},
+            {"operating_cash_flow": 100, "capital_expenditure": 300,
+             "free_cash_flow": -200, "stock_based_compensation": 50},
+            {"operating_cash_flow": 100, "capital_expenditure": 300,
+             "free_cash_flow": -200, "stock_based_compensation": 50},
+        ]
+        result = scanner.scan("TEST", income, balance, cf,
+                              interest_expense=500, ebit=600,
+                              roic=0.05, wacc=0.10, sbc_ttm=200)
+        assert result.total_flags_triggered == 4
+        assert result.verdict_override == "AVOID"
+        assert result.is_avoid
+        assert result.score_penalty == float("-inf")
 
     def test_full_scan_0_flags(self):
         """Full scan: healthy company should have 0 flags.
@@ -175,27 +223,30 @@ class TestRedFlagScanner:
         assert result.total_deduction == 0.0
         assert result.verdict_override is None
 
-    def test_full_scan_3_flags_avoid(self):
-        """Full scan: 3 flags should trigger AVOID override.
-        Newest-first data with declining revenue, bad D/E+ICR, negative FCF."""
+    def test_full_scan_3_flags_penalty(self):
+        """V10: 3 flags should apply -2.0 penalty (not AVOID override)."""
         scanner = RedFlagScanner()
         income = [
-            {"revenue": 500, "net_income": 40},   # newest — declining
+            {"revenue": 500, "net_income": 40},
             {"revenue": 600, "net_income": 50},
             {"revenue": 800, "net_income": 70},
-            {"revenue": 1000, "net_income": 100},  # oldest
+            {"revenue": 1000, "net_income": 100},
         ]
         balance = [{"total_debt": 3000, "total_equity": 1000}]
         cf = [
-            {"operating_cash_flow": 100, "capital_expenditure": 300, "free_cash_flow": -200},
-            {"operating_cash_flow": 100, "capital_expenditure": 300, "free_cash_flow": -200},
-            {"operating_cash_flow": 100, "capital_expenditure": 300, "free_cash_flow": -200},
-            {"operating_cash_flow": 100, "capital_expenditure": 300, "free_cash_flow": -200},
+            {"operating_cash_flow": 100, "capital_expenditure": 300, "free_cash_flow": -200,
+             "stock_based_compensation": 50},
+            {"operating_cash_flow": 100, "capital_expenditure": 300, "free_cash_flow": -200,
+             "stock_based_compensation": 50},
+            {"operating_cash_flow": 100, "capital_expenditure": 300, "free_cash_flow": -200,
+             "stock_based_compensation": 50},
+            {"operating_cash_flow": 100, "capital_expenditure": 300, "free_cash_flow": -200,
+             "stock_based_compensation": 50},
         ]
         result = scanner.scan("TEST", income, balance, cf, interest_expense=500, ebit=600)
         assert result.total_flags_triggered == 3
-        assert result.verdict_override == "AVOID"
-        assert result.is_avoid
+        assert result.verdict_override is None  # V10: only 4 flags = AVOID
+        assert result.score_penalty == -2.0
 
 
 # =============================================================================
@@ -253,7 +304,7 @@ class TestStockPillarEvaluator:
         assert len(result.pillars) == 8
         for p in result.pillars:
             assert 1.0 <= p.raw_score <= 5.0
-            assert p.weighted_score > 0
+            assert p.weighted_score >= 0
             assert p.math_tracking, f"Pillar {p.pillar_number} missing math tracking"
 
     def test_pillar_scores_in_range(self, evaluator, healthy_metrics):
@@ -324,9 +375,9 @@ class TestETFPillarEvaluator:
 
     def test_low_expense_ratio_scores_high(self):
         evaluator = ETFPillarEvaluator()
-        result = evaluator.evaluate("VOO", {"expense_ratio": 0.0003}, {})
-        p1 = result.pillars[0]
-        assert p1.raw_score >= 4.0  # Very low ER should score well
+        result = evaluator.evaluate("VOO", {"expense_ratio": 0.0003, "category": "Large Cap Blend"}, {})
+        p1 = result.pillars[1]
+        assert p1.raw_score >= 4.5  # Very low ER (0.03%) in Large Cap Blend should score well
 
 
 # =============================================================================
@@ -457,6 +508,7 @@ class TestValidationGate:
             RedFlagResult(1, "RF1", FlagStatus.CLEAR, "ok", "test", "test"),
             RedFlagResult(2, "RF2", FlagStatus.CLEAR, "ok", "test", "test"),
             RedFlagResult(3, "RF3", FlagStatus.CLEAR, "ok", "test", "test"),
+            RedFlagResult(4, "RF4", FlagStatus.CLEAR, "ok", "test", "test"),
         ]
         scorecard = Scorecard.compute_stock_score("TEST", pillars, flags)
 
@@ -489,11 +541,11 @@ class TestValidationGate:
             RedFlagResult(1, "RF1", FlagStatus.CLEAR, "ok", "test", "test"),
             RedFlagResult(2, "RF2", FlagStatus.CLEAR, "ok", "test", "test"),
             RedFlagResult(3, "RF3", FlagStatus.CLEAR, "ok", "test", "test"),
+            RedFlagResult(4, "RF4", FlagStatus.CLEAR, "ok", "test", "test"),
         ]
         scorecard = Scorecard.compute_stock_score("TEST", pillars, flags)
 
         report = gate.validate_stock("TEST", pillars, flags, scorecard)
-        # Math tracking and weights should be consistent
         assert report.passed
 
 

@@ -303,7 +303,7 @@ Returns a complete markdown report with scores, red flags, and verdict.""",
             func=self._web_search,
         )
 
-        # --- NEW: SEC Filings Reader ---
+        # --- NEW: SEC Filings Reader (parse filing content into sections) ---
         self._register(
             name="read_filings",
             description="Extract structural sections from SEC filings: Item 1 (Business Overview), Item 1A (Risk Factors), Item 7/MD&A. Supports 10-K, 10-Q, 8-K. Provide filing text content to parse.",
@@ -316,6 +316,117 @@ Returns a complete markdown report with scores, red flags, and verdict.""",
                 "required": ["filing_text"],
             },
             func=self._read_filings,
+        )
+
+        # --- NEW: Write file tool ---
+        self._register(
+            name="write_file",
+            description="Write content to a file, creating it if it doesn't exist. Creates parent directories automatically. Use for saving reports, memos, and other output files. File path must be within the project directory.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "filepath": {"type": "string", "description": "File path relative to project root (e.g., 'reports/memo.html')"},
+                    "content": {"type": "string", "description": "File content to write"},
+                },
+                "required": ["filepath", "content"],
+            },
+            func=self._write_file,
+        )
+
+        # --- NEW: Edit file tool ---
+        self._register(
+            name="edit_file",
+            description="Edit a file by replacing a specific string. Use for targeted modifications to existing files. The old_string must match exactly (including whitespace).",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "filepath": {"type": "string", "description": "File path relative to project root"},
+                    "old_string": {"type": "string", "description": "Exact text to find and replace (must match exactly)"},
+                    "new_string": {"type": "string", "description": "Replacement text"},
+                    "replace_all": {"type": "boolean", "description": "Replace all occurrences (default: false, only first)", "default": False},
+                },
+                "required": ["filepath", "old_string", "new_string"],
+            },
+            func=self._edit_file,
+        )
+
+        # --- NEW: Read file tool ---
+        self._register(
+            name="read_file",
+            description="Read a file with line-based pagination. Use for inspecting existing files, checking output, or reviewing data.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "filepath": {"type": "string", "description": "File path relative to project root"},
+                    "offset": {"type": "integer", "description": "Line number to start from (1-indexed, default: 1)", "default": 1},
+                    "limit": {"type": "integer", "description": "Max lines to return (default: 500)", "default": 500},
+                },
+                "required": ["filepath"],
+            },
+            func=self._read_file,
+        )
+
+        # --- NEW: Spawn subagent tool ---
+        self._register(
+            name="spawn_subagent",
+            description="""Delegate a focused sub-task to an isolated subagent that runs in parallel.
+The subagent has its own conversation history and tool access.
+Use for: multi-ticker analysis, deep-dive research, parallel independent tasks.
+The subagent returns a single synthesized response.""",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "Specific task for the subagent to complete"},
+                    "tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tool names the subagent can use (default: all research tools)",
+                    },
+                    "max_iterations": {"type": "integer", "description": "Max tool-calling iterations (default: 5)", "default": 5},
+                    "timeout_seconds": {"type": "integer", "description": "Max execution time in seconds (default: 120)", "default": 120},
+                },
+                "required": ["task"],
+            },
+            func=self._spawn_subagent,
+        )
+
+        # --- NEW: Cron management tool ---
+        self._register(
+            name="cron",
+            description="""Manage scheduled cron jobs for recurring tasks and monitoring.
+Actions:
+- create: Schedule a new recurring job (requires name, schedule, prompt)
+- list: Show all cron jobs and their status
+- enable/disable: Toggle a job on or off (requires job_id)
+- delete: Remove a job permanently (requires job_id)
+
+Schedule format: 'every 30m', 'every 2h', 'every 1d', etc.""",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "Action: create, list, enable, disable, delete"},
+                    "job_name": {"type": "string", "description": "Name for the job (required for create)"},
+                    "schedule": {"type": "string", "description": "Schedule expression like 'every 30m' (required for create)"},
+                    "prompt": {"type": "string", "description": "The task/prompt for the agent (required for create)"},
+                    "job_id": {"type": "string", "description": "Job ID (required for enable, disable, delete)"},
+                },
+                "required": ["action"],
+            },
+            func=self._cron_tool,
+        )
+
+        # --- NEW: Heartbeat check tool ---
+        self._register(
+            name="heartbeat",
+            description="Run a heartbeat check to see if anything needs attention: pending tasks, watchlist movements, scheduled reports. Returns alerts only when something is actionable.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "Action: check (run heartbeat) or status (show config)", "default": "check"},
+                },
+                "required": [],
+            },
+            func=self._heartbeat_tool,
         )
 
     def _register(self, name: str, description: str, parameters: dict, func: ToolFunc):
@@ -436,3 +547,59 @@ Returns a complete markdown report with scores, red flags, and verdict.""",
         """Parse SEC filing sections."""
         from .read_filings import parse_filing
         return parse_filing(filing_text, filing_type)
+
+    async def _write_file(self, filepath: str, content: str) -> dict:
+        """Write content to a file."""
+        from .filesystem import write_file
+        return await write_file(filepath, content)
+
+    async def _edit_file(
+        self, filepath: str, old_string: str, new_string: str, replace_all: bool = False
+    ) -> dict:
+        """Edit a file by replacing a specific string."""
+        from .filesystem import edit_file
+        return await edit_file(filepath, old_string, new_string, replace_all)
+
+    async def _read_file(self, filepath: str, offset: int = 1, limit: int = 500) -> dict:
+        """Read a file with line-based pagination."""
+        from .filesystem import read_file
+        return await read_file(filepath, offset, limit)
+
+    async def _spawn_subagent(
+        self,
+        task: str,
+        tools: list = None,
+        max_iterations: int = 5,
+        timeout_seconds: int = 120,
+    ) -> dict:
+        """Spawn an isolated subagent for a focused task."""
+        from .spawn_subagent import spawn_subagent
+        return await spawn_subagent(
+            task=task,
+            tools=tools,
+            max_iterations=max_iterations,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def _cron_tool(
+        self,
+        action: str,
+        job_name: str = "",
+        schedule: str = "",
+        prompt: str = "",
+        job_id: str = "",
+    ) -> dict:
+        """Manage cron jobs."""
+        from ..cron.executor import cron_tool
+        return await cron_tool(
+            action=action,
+            job_name=job_name,
+            schedule=schedule,
+            prompt=prompt,
+            job_id=job_id,
+        )
+
+    async def _heartbeat_tool(self, action: str = "check") -> dict:
+        """Run a heartbeat check."""
+        from .heartbeat import heartbeat_tool
+        return await heartbeat_tool(action=action)

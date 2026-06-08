@@ -217,8 +217,9 @@ class AnalysisPipeline:
         tasks["analyst"] = asyncio.to_thread(self.api.get_analyst_data, ticker)
         tasks["insider"] = asyncio.to_thread(self.api.get_insider_trades, ticker)
         tasks["institutional"] = asyncio.to_thread(self.api.get_major_holders, ticker)
-        tasks["earnings"] = asyncio.to_thread(self.api.get_earnings, ticker)
+        tasks["earnings"] = asyncio.to_thread(self.api.get_earnings, ticker, 8)
         tasks["company"] = asyncio.to_thread(self.api.get_company_info, ticker)
+        # V10: SBC and WACC are extracted from existing data
 
         if self._ctx.asset_type == "etf":
             tasks["etf"] = asyncio.to_thread(self.api.get_etf_data, ticker)
@@ -277,6 +278,26 @@ class AnalysisPipeline:
         # Extract EBIT and interest expense for RF2
         ebit, interest_expense = extract_interest_coverage(self._ctx.income_quarterly)
 
+        # Extract SBC TTM and earnings misses for V10 RF3/RF1
+        sbc_ttm = None
+        earnings_misses = 0
+        if self._ctx.cashflow_quarterly and "error" not in (self._ctx.cashflow_quarterly[0] if self._ctx.cashflow_quarterly else {}):
+            sbc_values = [
+                abs(float(q.get("stock_based_compensation", 0)))
+                for q in self._ctx.cashflow_quarterly[:4]
+                if q.get("stock_based_compensation") is not None
+            ]
+            sbc_ttm = sum(sbc_values) if sbc_values else None
+
+        if self._ctx.earnings_data and isinstance(self._ctx.earnings_data, dict):
+            earnings_misses = self._ctx.earnings_data.get("misses_last_4q", 0)
+
+        # Extract ROIC and WACC for RF4
+        roic = None
+        if self._ctx.metrics:
+            roic = self._ctx.metrics.get("roic")
+        wacc = self._ctx.company_info.get("wacc") if self._ctx.company_info else None
+
         results = self.red_flag_scanner.scan(
             ticker=self._ctx.ticker,
             income_statements=self._ctx.income_quarterly,
@@ -284,6 +305,11 @@ class AnalysisPipeline:
             cash_flow_statements=self._ctx.cashflow_quarterly,
             interest_expense=interest_expense,
             ebit=ebit,
+            stock_based_compensation=sbc_ttm,
+            roic=roic,
+            wacc=wacc,
+            earnings_misses=earnings_misses,
+            sbc_ttm=sbc_ttm,
         )
 
         self._ctx.red_flag_results = results

@@ -275,10 +275,9 @@ class FreeFinanceAPI:
                     "investing_cash_flow": self._safe_float(row.get("Investing Cash Flow")),
                     "financing_cash_flow": self._safe_float(row.get("Financing Cash Flow")),
                     "dividends_paid": abs(self._safe_float(row.get("Cash Dividends Paid") or 0)),
-                    "stock_based_compensation": self._safe_float(row.get("Stock Based Compensation")),
+                    "stock_based_compensation": self._safe_float(row.get("Stock Based Compensation") or row.get("StockBasedCompensation") or 0),
                     "change_in_working_capital": self._safe_float(row.get("Change In Working Capital")),
                     "depreciation_amortization": self._safe_float(row.get("Depreciation Amortization Depletion") or row.get("Depreciation And Amortization")),
-                    "share_repurchases": abs(self._safe_float(row.get("Repurchase Of Capital Stock") or 0)),
                 })
 
             self.cache.set(cache_key, result, ttl=86400)
@@ -372,6 +371,16 @@ class FreeFinanceAPI:
                 "ocf_calculated": op_cf,
                 "capex_calculated": capex,
                 "fcf_calculated": (op_cf - capex) if op_cf is not None else None,
+                "fcf_adjusted": (
+                    (op_cf - capex - abs(self._safe_float(
+                        cashflow[0].get("stock_based_compensation", 0)
+                    )))
+                    if op_cf is not None and capex is not None
+                    else None
+                ),
+                "sbc_ttm": abs(self._safe_float(
+                    cashflow[0].get("stock_based_compensation", 0)
+                )) if cashflow and "error" not in cashflow[0] else None,
                 # Shares
                 "shares_outstanding": shares_outstanding,
                 "shares_float": info.get("floatShares"),
@@ -410,25 +419,30 @@ class FreeFinanceAPI:
                 return []
 
             result = []
+            miss_count = 0
             for date, row in earnings_dates.head(limit).iterrows():
+                eps_est = row.get("EPS Estimate")
+                eps_rep = row.get("Reported EPS")
+                if eps_est and eps_rep and eps_rep < eps_est:
+                    miss_count += 1
                 result.append({
                     "report_period": date.strftime("%Y-%m-%d") if hasattr(date, "strftime") else str(date),
-                    "eps_estimate": row.get("EPS Estimate"),
-                    "eps_reported": row.get("Reported EPS"),
+                    "eps_estimate": eps_est,
+                    "eps_reported": eps_rep,
                     "eps_surprise": (
-                        (row["Reported EPS"] - row["EPS Estimate"]) / abs(row["EPS Estimate"])
-                        if row.get("EPS Estimate") and row.get("Reported EPS") and row["EPS Estimate"] != 0
+                        (eps_rep - eps_est) / abs(eps_est)
+                        if eps_est and eps_rep and eps_est != 0
                         else None
                     ),
                     "eps_surprise_abs": (
-                        row["Reported EPS"] - row["EPS Estimate"]
-                        if row.get("EPS Estimate") and row.get("Reported EPS")
+                        eps_rep - eps_est
+                        if eps_est and eps_rep
                         else None
                     ),
                 })
 
-            self.cache.set(cache_key, result, ttl=3600)
-            return result
+            self.cache.set(cache_key, {"results": result, "misses_last_4q": miss_count}, ttl=3600)
+            return {"results": result, "misses_last_4q": miss_count}
         except Exception as e:
             return [{"error": str(e)}]
 
