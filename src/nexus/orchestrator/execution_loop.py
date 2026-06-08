@@ -80,6 +80,10 @@ class AnalysisContext:
     company_info: Optional[dict] = None
     etf_data: Optional[dict] = None
 
+    # V10 data sources
+    obs_data: Optional[dict] = None          # Off-balance sheet commitments
+    legal_data: Optional[dict] = None         # Legal/regulatory freshness
+
     # Analysis results
     red_flag_results: Optional[RedFlagScanResults] = None
     stock_pillar_results: Optional[StockPillarResults] = None
@@ -219,7 +223,11 @@ class AnalysisPipeline:
         tasks["institutional"] = asyncio.to_thread(self.api.get_major_holders, ticker)
         tasks["earnings"] = asyncio.to_thread(self.api.get_earnings, ticker, 8)
         tasks["company"] = asyncio.to_thread(self.api.get_company_info, ticker)
-        # V10: SBC and WACC are extracted from existing data
+
+        # V10: Off-balance sheet commitments and legal/regulatory freshness
+        if self._ctx.asset_type == "stock":
+            tasks["obs"] = asyncio.to_thread(self.api.get_off_balance_sheet_commitments, ticker)
+            tasks["legal"] = asyncio.to_thread(self.api.get_legal_regulatory_status, ticker)
 
         if self._ctx.asset_type == "etf":
             tasks["etf"] = asyncio.to_thread(self.api.get_etf_data, ticker)
@@ -254,6 +262,8 @@ class AnalysisPipeline:
         self._ctx.institutional_data = results.get("institutional", {})
         self._ctx.earnings_data = results.get("earnings", [])
         self._ctx.company_info = results.get("company", {})
+        self._ctx.obs_data = results.get("obs", {})
+        self._ctx.legal_data = results.get("legal", {})
         self._ctx.etf_data = results.get("etf", {})
 
         # Data quality check
@@ -294,9 +304,12 @@ class AnalysisPipeline:
 
         # Extract ROIC and WACC for RF4
         roic = None
+        wacc = None
         if self._ctx.metrics:
             roic = self._ctx.metrics.get("roic")
-        wacc = self._ctx.company_info.get("wacc") if self._ctx.company_info else None
+            wacc = self._ctx.metrics.get("wacc_estimate")
+        if wacc is None and self._ctx.company_info:
+            wacc = self._ctx.company_info.get("wacc")
 
         results = self.red_flag_scanner.scan(
             ticker=self._ctx.ticker,
@@ -315,7 +328,7 @@ class AnalysisPipeline:
         self._ctx.red_flag_results = results
 
         self._emit(PipelinePhase.RED_FLAG_SCAN, "done",
-                   f"Red flags: {results.total_flags_triggered}/3 triggered"
+                   f"Red flags: {results.total_flags_triggered}/4 triggered"
                    + (f" — {results.verdict_override}!" if results.verdict_override else ""))
 
     # ------------------------------------------------------------------
@@ -482,7 +495,7 @@ class AnalysisPipeline:
         # Red Flag Scan
         if ctx.red_flag_results:
             lines.append("## Red Flag Scanner")
-            lines.append(f"**Flags triggered: {ctx.red_flag_results.total_flags_triggered}/3**")
+            lines.append(f"**Flags triggered: {ctx.red_flag_results.total_flags_triggered}/4**")
             if ctx.red_flag_results.verdict_override:
                 lines.append(f"**⚠️ VERDICT OVERRIDE: {ctx.red_flag_results.verdict_override}**")
             lines.append("")
@@ -491,6 +504,35 @@ class AnalysisPipeline:
             for rf in ctx.red_flag_results.results:
                 icon = "🔴" if rf.status.value == "triggered" else "🟡" if rf.status.value == "warning" else "🟢"
                 lines.append(f"| {rf.flag_number} | {rf.flag_name} | {icon} {rf.status.value.upper()} | {rf.actual_value} |")
+            lines.append("")
+
+        # V10: Off-Balance Sheet Commitments
+        if ctx.obs_data and ctx.obs_data.get("purchase_obligations"):
+            obs = ctx.obs_data
+            lines.append("## Off-Balance Sheet Commitments")
+            lines.append(f"| Metric | Value |")
+            lines.append(f"|--------|-------|")
+            lines.append(f"| Purchase Obligations | ${obs['purchase_obligations']:,.0f} |")
+            if obs.get("cash_on_balance_sheet"):
+                lines.append(f"| Cash on Balance Sheet | ${obs['cash_on_balance_sheet']:,.0f} |")
+                ratio = obs.get("commitment_ratio", 0)
+                flag = "⚠️" if ratio and ratio > 0.5 else "✅"
+                lines.append(f"| Commitment Ratio | {ratio:.2%} {flag} |")
+            lines.append(f"| Filing Date | {obs.get('filing_date', 'N/A')} |")
+            lines.append(f"| Status | {obs.get('status', 'N/A')} |")
+            lines.append("")
+
+        # V10: Legal/Regulatory Freshness
+        if ctx.legal_data:
+            leg = ctx.legal_data
+            lines.append("## Legal/Regulatory Freshness")
+            lines.append(f"| Metric | Value |")
+            lines.append(f"|--------|-------|")
+            fresh_icon = "✅" if leg.get("fresh") else "⚠️"
+            lines.append(f"| Fresh (within 90 days) | {fresh_icon} {leg.get('fresh', False)} |")
+            lines.append(f"| Latest Date | {leg.get('latest_date', 'N/A')} |")
+            lines.append(f"| Source | {leg.get('source', 'N/A')} |")
+            lines.append(f"| Status | {leg.get('status', 'N/A')} |")
             lines.append("")
 
         # Pillar Results

@@ -99,7 +99,7 @@ class Scorecard:
         if result.flag_override == "AVOID":
             result.red_flag_deduction = float("-inf")
             tracking.append(
-                "RED_FLAG_OVERRIDE: 3 flags triggered → "
+                "RED_FLAG_OVERRIDE: 4 flags triggered → "
                 "Automatic AVOID verdict (overrides all pillar scores)"
             )
         else:
@@ -209,27 +209,28 @@ class Scorecard:
 
 SCORING_TABLE = """
 ╔══════════════════════════════════════════════════════════════╗
-║              Universal Investment Analysis Scorecard          ║
+║      Universal Investment Analysis Scorecard — V10           ║
 ╠══════════════════════════════════════════════════════════════╣
 ║ PILLAR                    WEIGHT    RAW     WEIGHTED          ║
 ╠══════════════════════════════════════════════════════════════╣
 ║ Stocks:                                                      ║
-║  1. Business Quality        15%     X.X       X.XX            ║
+║  1. Business Quality        20%     X.X       X.XX            ║
 ║  2. Management              15%     X.X       X.XX            ║
-║  3. Financial Strength      15%     X.X       X.XX            ║
-║  4. Valuation               15%     X.X       X.XX            ║
+║  3. Financial Strength      20%     X.X       X.XX            ║
+║  4. Valuation & MoS         20%     X.X       X.XX            ║
 ║  5. Circle of Competence    10%     X.X       X.XX            ║
 ║  6. Long-Term Outlook       10%     X.X       X.XX            ║
-║  7. Risk Assessment         10%     X.X       X.XX            ║
-║  8. Temperament Test        10%     X.X       X.XX            ║
+║  7. Risk Assessment          5%     X.X       X.XX            ║
+║  8. Temperament Test         0%     X.X       0.00 (Gate)     ║
 ╠══════════════════════════════════════════════════════════════╣
 ║ PILLAR TOTAL               100%              XX.XX / 5.00    ║
 ║                                                              ║
-║ RED FLAG DEDUCTIONS:                                         ║
+║ V10 RED FLAG PENALTY SCHEDULE:                               ║
 ║  0 flags = No deduction                                      ║
-║  1 flag  = -0.5 from final score                             ║
-║  2 flags = -1.0 from final score                             ║
-║  3 flags = AUTOMATIC AVOID (overrides all scores)            ║
+║  1 flag  = No penalty (note in verdict)                      ║
+║  2 flags = -1.0 from final + downgrade rating                ║
+║  3 flags = -2.0 from final + downgrade 2 tiers               ║
+║  4 flags = AUTOMATIC AVOID (overrides all scores)            ║
 ╠══════════════════════════════════════════════════════════════╣
 ║ FINAL SCORE:  XX.X%                                          ║
 ║ STAR RATING:  ★★★★☆                                         ║
@@ -238,20 +239,19 @@ SCORING_TABLE = """
 
 ETFs:
 ╔══════════════════════════════════════════════════════════════╗
-║  1. Expense Ratio           20%     X.X       X.XX            ║
-║  2. Tracking Error          15%     X.X       X.XX            ║
-║  3. Liquidity               15%     X.X       X.XX            ║
-║  4. Holdings Quality        15%     X.X       X.XX            ║
-║  5. Tax Efficiency          15%     X.X       X.XX            ║
-║  6. Methodology             10%     X.X       X.XX            ║
-║  7. Fit Assessment          10%     X.X       X.XX            ║
+║  1. Index Quality & Constr. 20%     X.X       X.XX            ║
+║  2. Cost Efficiency         25%     X.X       X.XX            ║
+║  3. Tracking & Counterparty 15%     X.X       X.XX            ║
+║  4. Liquidity & Fund Size   15%     X.X       X.XX            ║
+║  5. Tax Efficiency          10%     X.X       X.XX            ║
+║  6. Diversification         10%     X.X       X.XX            ║
+║  7. Strategy Fit             5%     X.X       X.XX            ║
 ╠══════════════════════════════════════════════════════════════╣
 ║ ETF TOTAL                  100%              XX.XX / 5.00    ║
 ╚══════════════════════════════════════════════════════════════╝
 
-BUY:   ≥ 70% and 0 red flags
-WATCH: 50-69% or 1 red flag
-AVOID: < 50% or 2+ red flags or flag override
+V10 STOCK VERDICT: ≥70% & 0 flags = BUY | 50-69% or 1 flag = WATCH | <50% or 2+ flags = AVOID
+V10 ETF VERDICT:  ≥70% = BUY | 50-69% = WATCH | <50% = AVOID
 """
 
 

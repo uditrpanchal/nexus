@@ -344,14 +344,12 @@ class FreeFinanceAPI:
                     if op_cf and capex and shares_outstanding and shares_outstanding != 0
                     else None
                 ),
-                # Profitability
                 "gross_margin": info.get("grossMargins"),
                 "operating_margin": info.get("operatingMargins"),
                 "net_margin": info.get("profitMargins"),
                 "calculated_profit_margin": profit_margin,
                 "roe": info.get("returnOnEquity") or roe,
                 "roa": info.get("returnOnAssets") or roa,
-                "roic": info.get("returnOnEquity"),  # yfinance doesn't have ROIC; ROE as proxy
                 # Leverage
                 "debt_to_equity": info.get("debtToEquity") or debt_to_equity,
                 "current_ratio": current_ratio,
@@ -394,6 +392,27 @@ class FreeFinanceAPI:
                 "exchange": info.get("exchange"),
                 "source": "Yahoo Finance (yfinance)",
             }
+
+            # V10: True ROIC calculation (replace ROE proxy)
+            roic_value = info.get("returnOnInvestedCapital")
+            if roic_value is None and income and "error" not in income[0] and balance and "error" not in balance[0]:
+                op_inc = income[0].get("operating_income")
+                tax_prov = income[0].get("tax_provision")
+                pretax = income[0].get("pretax_income")
+                if op_inc is not None and tax_prov is not None and pretax and pretax != 0:
+                    nopat = float(op_inc) * (1 - float(tax_prov) / float(pretax))
+                    td = balance[0].get("total_debt") or 0
+                    te = balance[0].get("total_equity") or 0
+                    cash_eq = balance[0].get("cash_and_equivalents") or 0
+                    gw = balance[0].get("goodwill") or 0
+                    invested_capital = float(td) + float(te) - float(cash_eq) - float(gw)
+                    roic_value = (nopat / invested_capital) if invested_capital > 0 else None
+            result["roic"] = roic_value
+
+            # V10: Add WACC estimate (store as decimal fraction, not percentage)
+            wacc_data = self.get_wacc_estimate(ticker)
+            if wacc_data and "error" not in wacc_data:
+                result["wacc_estimate"] = wacc_data["wacc_pct"] / 100.0
 
             self.cache.set(cache_key, result, ttl=300)  # 5 min
             return result
@@ -582,6 +601,10 @@ class FreeFinanceAPI:
                 "200d_avg": info.get("twoHundredDayAverage"),
                 "source": "Yahoo Finance (yfinance)",
             }
+            # V10: Add WACC estimate (store as decimal fraction)
+            wacc_data = self.get_wacc_estimate(ticker)
+            if wacc_data and "error" not in wacc_data:
+                result["wacc"] = wacc_data["wacc_pct"] / 100.0
             self.cache.set(cache_key, result, ttl=3600)
             return result
         except Exception as e:
@@ -738,45 +761,50 @@ class FreeFinanceAPI:
     def get_sec_filings_list(
         self, ticker: str, filing_type: str = "10-K", limit: int = 5
     ) -> list[dict[str, Any]]:
-        """Get SEC filing metadata — replaces /filings/"""
+        """Get SEC filing metadata via Submissions API."""
         cache_key = f"filings:{ticker.upper()}:{filing_type}:{limit}"
         cached = self.cache.get(cache_key)
         if cached:
             return cached
 
         try:
-            # SEC EDGAR full-text search API (free, no key)
             cik = self._get_cik(ticker)
             if not cik:
                 return [{"error": f"CIK not found for {ticker}"}]
 
-            url = f"https://efts.sec.gov/LATEST/search-index?q=form-type%3A(%22{filing_type}%22)+AND+company%3A(%22{ticker}%22)&dateRange=custom&startdt=2020-01-01&enddt={datetime.now().strftime('%Y-%m-%d')}&page={1}"
-
-            headers = {
-                "User-Agent": "NexusAgent/1.0 (Research)",
-                "Accept-Encoding": "gzip, deflate",
-                "Host": "efts.sec.gov",
-            }
+            # Use SEC Submissions API (reliable, no key needed)
+            url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+            headers = {"User-Agent": "NexusAgent/1.0 (Research)"}
             resp = self._sync_client.get(url, headers=headers)
 
             if resp.status_code != 200:
-                # Fallback: use yfinance calendar/earnings
                 return self._fallback_filings(ticker, filing_type, limit)
 
             data = resp.json()
-            hits = data.get("hits", {}).get("hits", [])
+            recent = data.get("filings", {}).get("recent", {})
+            forms = recent.get("form", [])
+            dates = recent.get("filingDate", [])
+            accession_numbers = recent.get("accessionNumber", [])
+            primary_docs = recent.get("primaryDocument", [])
+            description = recent.get("primaryDocDescription", [])
 
             result = []
-            for hit in hits[:limit]:
-                src = hit.get("_source", {})
-                result.append({
-                    "filing_type": src.get("form_type", [filing_type])[0] if isinstance(src.get("form_type"), list) else src.get("form_type", filing_type),
-                    "filing_date": src.get("file_date", ""),
-                    "accession_number": src.get("adsh", ""),
-                    "filing_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type={filing_type}&dateb=&owner=include&count=40",
-                    "company_name": src.get("display_names", [""])[0] if isinstance(src.get("display_names"), list) else "",
-                    "description": src.get("file_description", ""),
-                })
+            count = 0
+            for i in range(len(forms)):
+                if forms[i] == filing_type:
+                    acc = accession_numbers[i] if i < len(accession_numbers) else ""
+                    result.append({
+                        "filing_type": filing_type,
+                        "filing_date": dates[i] if i < len(dates) else "",
+                        "accession_number": acc,
+                        "filing_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type={filing_type}&dateb=&owner=include&count=40",
+                        "company_name": data.get("name", ""),
+                        "description": description[i][:200] if i < len(description) else "",
+                        "cik": cik,
+                    })
+                    count += 1
+                    if count >= limit:
+                        break
 
             self.cache.set(cache_key, result, ttl=3600)
             return result
@@ -796,75 +824,73 @@ class FreeFinanceAPI:
     def get_sec_filing_content(
         self, cik: str, accession_number: str, filing_type: str = "10-K"
     ) -> dict[str, Any]:
-        """Get specific filing content — replaces /filings/items/"""
+        """Get specific filing content via SEC EDGAR TXT URL."""
         cache_key = f"filing_content:{cik}:{accession_number}"
         cached = self.cache.get(cache_key)
         if cached:
             return cached
 
-        try:
-            # Get filing index
-            acc_clean = accession_number.replace("-", "")
-            url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        headers = {"User-Agent": "NexusAgent/1.0 (Research)"}
 
-            headers = {
-                "User-Agent": "NexusAgent/1.0 (Research)",
-            }
-            resp = self._sync_client.get(url, headers=headers)
+        try:
+            acc_clean = accession_number.replace("-", "")
+            cik_num = int(cik)
+
+            # Primary: Direct TXT URL (most reliable)
+            txt_url = (
+                f"https://www.sec.gov/Archives/edgar/data/{cik_num}/"
+                f"{acc_clean}/{accession_number}.txt"
+            )
+            resp = self._sync_client.get(txt_url, headers=headers)
 
             if resp.status_code != 200:
-                return {"error": f"SEC API returned {resp.status_code}"}
+                # Fallback: try index page to find the document
+                index_url = (
+                    f"https://www.sec.gov/Archives/edgar/data/{cik_num}/"
+                    f"{acc_clean}/{accession_number}-index.htm"
+                )
+                resp_idx = self._sync_client.get(index_url, headers=headers)
+                if resp_idx.status_code != 200:
+                    return {"error": f"Could not fetch filing (HTTP {resp.status_code})"}
 
-            data = resp.json()
-
-            # Get the filing document URL
-            url2 = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{accession_number}-index.htm"
-            resp2 = self._sync_client.get(url2, headers=headers)
-
-            if resp2.status_code != 200:
-                return {"error": f"Could not fetch filing index"}
-
-            # Parse the index to find the main document
-            soup = BeautifulSoup(resp2.text, "html.parser")
-            doc_link = None
-            for link in soup.find_all("a"):
-                href = link.get("href", "")
-                if href.endswith(".htm") or href.endswith(".html"):
-                    if "primary" in href.lower() or href.endswith(f"{acc_clean.split('-')[0]}.htm"):
+                soup = BeautifulSoup(resp_idx.text, "html.parser")
+                doc_link = None
+                for a in soup.find_all("a"):
+                    href = a.get("href", "")
+                    if href.endswith(".txt"):
                         doc_link = href
                         break
+                if not doc_link:
+                    for a in soup.find_all("a"):
+                        href = a.get("href", "")
+                        if href.endswith(".htm") or href.endswith(".html"):
+                            doc_link = href
+                            break
+                if not doc_link:
+                    return {"error": "Could not find filing document in index"}
 
-            if not doc_link:
-                # Use first .htm file in the directory
-                for link in soup.find_all("a"):
-                    href = link.get("href", "")
-                    if href.endswith(".htm") or href.endswith(".html"):
-                        doc_link = href
-                        break
+                if not doc_link.startswith("http"):
+                    doc_link = (
+                        f"https://www.sec.gov/Archives/edgar/data/{cik_num}/"
+                        f"{acc_clean}/{doc_link}"
+                    )
+                resp = self._sync_client.get(doc_link, headers=headers)
+                if resp.status_code != 200:
+                    return {"error": f"Could not fetch filing document (HTTP {resp.status_code})"}
 
-            if not doc_link:
-                return {"error": "Could not find filing document"}
-
-            if not doc_link.startswith("http"):
-                doc_link = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{doc_link}"
-
-            resp3 = self._sync_client.get(doc_link, headers=headers)
-            if resp3.status_code != 200:
-                return {"error": f"Could not fetch filing document"}
-
-            content = resp3.text
+            content = resp.text
 
             result = {
                 "filing_type": filing_type,
                 "accession_number": accession_number,
                 "cik": cik,
-                "document_url": doc_link,
-                "content": content[:50000],  # Cap at 50KB
+                "document_url": str(resp.url),
+                "content": content[:500000],  # Cap at 500KB for footnote extraction
                 "content_length": len(content),
                 "source": "SEC EDGAR",
             }
 
-            self.cache.set(cache_key, result, ttl=604800)  # 7 days — filings are immutable
+            self.cache.set(cache_key, result, ttl=604800)
             return result
         except Exception as e:
             return {"error": str(e)}
@@ -994,6 +1020,14 @@ class FreeFinanceAPI:
                 "inception_date": str(info.get("fundInceptionDate")) if info.get("fundInceptionDate") else None,
                 "holdings_count": info.get("holdingsCount"),
                 "top_holdings": holdings,
+                # V10: Bid-ask spread
+                "bid": info.get("bid"),
+                "ask": info.get("ask"),
+                "bid_ask_spread_bps": round(
+                    (float(info.get("ask", 0)) - float(info.get("bid", 0)))
+                    / max(float(info.get("navPrice") or info.get("previousClose", 1)), 1)
+                    * 10000, 2
+                ) if info.get("bid") and info.get("ask") else None,
                 "source": "Yahoo Finance",
             }
             self.cache.set(cache_key, result, ttl=3600)
@@ -1002,8 +1036,546 @@ class FreeFinanceAPI:
             return {"error": str(e)}
 
     # =========================================================================
-    # HELPER METHODS
+    # WACC ESTIMATION (V10) — using sector-wacc.md lookup + adjustments
     # =========================================================================
+
+    def get_wacc_estimate(self, ticker: str) -> dict[str, Any]:
+        """
+        Estimate WACC using sector baseline + company-specific adjustments.
+
+        Strategy:
+          1. Read sector base WACC from .heon/sector-wacc.md reference table
+          2. Apply adjustment factors based on company metrics
+          3. Return estimated WACC with breakdown
+
+        All data from existing yfinance metrics — no new API calls.
+        """
+        cache_key = f"wacc:{ticker.upper()}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return cached
+
+        # Get baseline metrics
+        metrics = self.get_key_metrics(ticker)
+        info = {}
+        try:
+            t = yf.Ticker(ticker)
+            info = t.info
+        except Exception:
+            pass
+
+        sector = (metrics.get("sector") or info.get("sector") or "").lower()
+        sector_wacc = self._lookup_sector_wacc(sector)
+
+        if sector_wacc is None:
+            # Fallback: use a generic 9% midpoint
+            sector_wacc = {"sector": sector, "low": 8.0, "high": 10.0, "midpoint": 9.0, "notes": "Fallback estimate"}
+
+        base_wacc = sector_wacc["midpoint"]
+        adjustments = []
+        adjustment_pct = 0.0
+
+        # --- Positive adjustments (increase WACC) ---
+
+        # High debt: D/E > 1.5 → +1-2%
+        de = metrics.get("debt_to_equity")
+        if de is not None and de > 1.5:
+            adj = min(2.0, (float(de) - 1.5) * 1.0)
+            adjustments.append(("High debt (D/E > 1.5)", adj))
+            adjustment_pct += adj
+
+        # Small cap: market cap < $2B → +1-2%
+        mcap = metrics.get("market_cap")
+        if mcap is not None and mcap < 2e9:
+            adj = 1.5
+            adjustments.append(("Small cap (< $2B)", adj))
+            adjustment_pct += adj
+
+        # Emerging markets exposure → +1-3% (proxy: country not US)
+        country = (info.get("country") or "").upper()
+        if country not in ("US", "USA", "UNITED STATES", ""):
+            adj = 1.0
+            adjustments.append(("Non-US exposure", adj))
+            adjustment_pct += adj
+
+        # Regulatory uncertainty → +0.5-1.5% (proxy: fintech/bio/pharma keywords in sector)
+        if any(kw in sector for kw in ("fintech", "biotechnology", "pharmaceutical")):
+            adj = 1.0
+            adjustments.append(("Regulatory uncertainty sector", adj))
+            adjustment_pct += adj
+
+        # --- Negative adjustments (decrease WACC) ---
+
+        # Market leader with moat: gross margin > 50% → -0.5-1%
+        gm = metrics.get("gross_margin")
+        if gm is not None and gm > 0.50:
+            adj = -0.75
+            adjustments.append(("Market leader / wide moat (GM > 50%)", adj))
+            adjustment_pct += adj
+
+        # Recurring revenue model → -0.5-1% (proxy: sector)
+        if any(kw in sector for kw in ("software", "subscription", "saas")):
+            adj = -0.5
+            adjustments.append(("Recurring revenue model", adj))
+            adjustment_pct += adj
+
+        # Final WACC
+        wacc = base_wacc + adjustment_pct
+        wacc = max(4.0, min(15.0, wacc))  # Clamp to 4-15% range
+
+        result = {
+            "ticker": ticker.upper(),
+            "wacc_pct": round(wacc, 2),
+            "base_sector_wacc": round(base_wacc, 2),
+            "sector": sector_wacc["sector"],
+            "sector_range": f"{sector_wacc['low']}%-{sector_wacc['high']}%",
+            "adjustments": adjustments,
+            "adjustment_total": round(adjustment_pct, 2),
+            "method": "Sector WACC table + company adjustments",
+            "source": "sector-wacc.md reference table",
+        }
+        self.cache.set(cache_key, result, ttl=86400)
+        return result
+
+    SECTOR_WACC_CACHE: dict[str, dict] | None = None
+
+    def _lookup_sector_wacc(self, sector: str) -> dict | None:
+        """Look up a sector's WACC range from .heon/sector-wacc.md reference table."""
+        if FreeFinanceAPI.SECTOR_WACC_CACHE is None:
+            FreeFinanceAPI.SECTOR_WACC_CACHE = self._load_sector_wacc_table()
+
+        if not sector:
+            return None
+
+        # Exact match first
+        if sector in FreeFinanceAPI.SECTOR_WACC_CACHE:
+            return FreeFinanceAPI.SECTOR_WACC_CACHE[sector]
+
+        # Fuzzy match (e.g. "technology" matches "information technology")
+        for key, val in FreeFinanceAPI.SECTOR_WACC_CACHE.items():
+            if sector in key or key in sector:
+                return val
+
+        return None
+
+    @staticmethod
+    def _load_sector_wacc_table() -> dict[str, dict]:
+        """
+        Parse .heon/sector-wacc.md into a dict of sector -> {low, high, midpoint, notes}.
+        File format: markdown table with | Sector | Typical WACC Range | Notes |
+        """
+        import os
+        import re
+
+        # Search paths for the reference file
+        search_paths = [
+            os.path.join(os.path.dirname(__file__), "..", "..", ".heon", "sector-wacc.md"),
+            os.path.join(os.path.dirname(__file__), "..", "..", ".heon", "sector-wacc.md"),
+            ".heon/sector-wacc.md",
+        ]
+        filepath = None
+        for p in search_paths:
+            if os.path.exists(p):
+                filepath = p
+                break
+
+        if not filepath:
+            return {}
+
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        result = {}
+        # Parse table rows: | Sector | 8-10% | Notes |
+        pattern = r"\|\s*([A-Za-z\s/-]+)\s*\|\s*(\d+)\s*-\s*(\d+)%\s*\|"
+        for match in re.finditer(pattern, content):
+            sector_name = match.group(1).strip().lower()
+            low = float(match.group(2))
+            high = float(match.group(3))
+            midpoint = (low + high) / 2
+
+            # Extract notes from the rest of the line up to the closing |
+            line_start = max(0, match.start() - 2)
+            line_end = content.find("\n", match.start())
+            line = content[line_start:line_end] if line_end > 0 else content[line_start:]
+            notes = ""
+            notes_match = re.search(r"\|\s*[^\|]+\|\s*([^\|]+)\s*\|", line)
+            if notes_match:
+                notes = notes_match.group(1).strip()
+
+            result[sector_name] = {
+                "sector": sector_name.title(),
+                "low": low,
+                "high": high,
+                "midpoint": midpoint,
+                "notes": notes,
+            }
+
+        return result
+
+    # =========================================================================
+    # OFF-BALANCE SHEET COMMITMENTS (V10) — from SEC 10-K footnotes
+    # =========================================================================
+
+    def get_off_balance_sheet_commitments(self, ticker: str) -> dict[str, Any]:
+        """
+        Fetch off-balance sheet commitments from latest 10-K.
+        Uses direct TXT URL for full filing text.
+        """
+        cache_key = f"obs:{ticker.upper()}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return cached
+
+        result = {
+            "ticker": ticker.upper(),
+            "purchase_obligations": None,
+            "commitment_ratio": None,
+            "cash_on_balance_sheet": None,
+            "source": "SEC EDGAR 10-K footnotes",
+            "filing_date": None,
+            "status": "not_found",
+        }
+
+        try:
+            filings = self.get_sec_filings_list(ticker, "10-K", limit=1)
+            if not filings or "error" in (filings[0] if filings else {}):
+                result["status"] = "no_10k_found"
+                self.cache.set(cache_key, result, ttl=86400)
+                return result
+
+            latest = filings[0]
+            cik_str = latest.get("cik") or self._get_cik(ticker) or "0000000000"
+            accession = latest.get("accession_number")
+            result["filing_date"] = latest.get("filing_date")
+            if not accession:
+                result["status"] = "missing_accession"
+                self.cache.set(cache_key, result, ttl=86400)
+                return result
+
+            # Direct TXT URL for full content (no cap)
+            acc_clean = accession.replace("-", "")
+            cik_num = int(cik_str)
+            txt_url = (
+                f"https://www.sec.gov/Archives/edgar/data/{cik_num}/"
+                f"{acc_clean}/{accession}.txt"
+            )
+            headers = {"User-Agent": "NexusAgent/1.0 (Research)"}
+            resp = self._sync_client.get(txt_url, headers=headers)
+            if resp.status_code != 200:
+                result["status"] = f"fetch_failed_http_{resp.status_code}"
+                self.cache.set(cache_key, result, ttl=86400)
+                return result
+
+            content = resp.text
+
+            # Parse commitments from full text (search strategically)
+            text_len = len(content)
+            obligations = self._parse_commitments_from_text(content)
+
+            if obligations is not None and obligations > 0:
+                result["purchase_obligations"] = round(obligations, 2)
+                result["status"] = "found"
+                balance = self.get_balance_sheets(ticker, "annual", 1)
+                if balance and "error" not in balance[0]:
+                    cash = balance[0].get("cash_and_equivalents")
+                    if cash is not None and cash > 0:
+                        cash_val = float(cash)
+                        result["cash_on_balance_sheet"] = round(cash_val, 2)
+                        # Normalize: if obligations are in millions vs cash in raw dollars
+                        if obligations < cash_val * 0.01 and obligations > 0:
+                            obligations_scaled = obligations * 1_000_000
+                            result["purchase_obligations"] = round(obligations_scaled, 2)
+                            obligations = obligations_scaled
+                        ratio = obligations / cash_val
+                        result["commitment_ratio"] = round(ratio, 4)
+            else:
+                result["status"] = "not_found_in_filing"
+
+            self.cache.set(cache_key, result, ttl=86400)
+            return result
+
+        except Exception as e:
+            result["status"] = f"error: {str(e)[:100]}"
+            self.cache.set(cache_key, result, ttl=86400)
+            return result
+
+    @staticmethod
+    def _strip_html(text: str) -> str:
+        """Remove HTML tags from SEC filing text for clean regex matching."""
+        import re
+        # Remove all HTML tags
+        text = re.sub(r'<[^>]+>', ' ', text)
+        # Decode common entities
+        text = text.replace('&nbsp;', ' ').replace('&amp;', '&')
+        text = text.replace('&lt;', '<').replace('&gt;', '>')
+        text = re.sub(r'&#\d+;', ' ', text)
+        # Collapse whitespace
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
+    @staticmethod
+    def _parse_commitments_from_text(text: str) -> float | None:
+        """
+        Parse "Commitments and Contingencies" or "Contractual Obligations"
+        footnotes from SEC filing text. Strips HTML first.
+        """
+        import re
+
+        # Strip HTML for reliable pattern matching
+        text = FreeFinanceAPI._strip_html(text)
+
+        total_obligations = 0.0
+        found_any = False
+
+        def _extract_total_from_section(section: str) -> float | None:
+            """Extract the 'Total' row dollar amount from a section."""
+            # Look for "Total" near a dollar amount
+            total_match = re.search(
+                r"(?i)total\s+[^\$]{0,100}?\$\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)?",
+                section,
+            )
+            if total_match:
+                val = float(total_match.group(1).replace(",", ""))
+                return val
+            return None
+
+        def _extract_largest_amount(section: str) -> float | None:
+            """Extract the largest dollar amount from a section."""
+            amounts = re.findall(r'\$\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)?', section)
+            if not amounts:
+                return None
+            parsed = []
+            for a in amounts:
+                val = float(a.replace(",", ""))
+                if val < 1e6:  # Likely in thousands/millions
+                    parsed.append(val * 1e6)
+                elif val < 1e12:  # Already correct
+                    parsed.append(val)
+            return max(parsed) if parsed else None
+
+        # Strategy 1: "Contractual Obligations" table
+        co_match = re.search(r"(?i)contractual\s+obligations[\s\S]{0,5000}?(?=critical|item\s+|$)", text)
+        if co_match:
+            section = co_match.group(0)
+            total_val = _extract_total_from_section(section)
+            if total_val:
+                total_obligations += total_val
+                found_any = True
+            else:
+                val = _extract_largest_amount(section)
+                if val:
+                    total_obligations = val
+                    found_any = True
+
+        # Strategy 2: "Commitments and Contingencies" footnote section
+        if not found_any:
+            cc_match = re.search(
+                r"(?i)commitments\s+and\s+contingencies[\s\S]{0,8000}?(?=note\s+\d+|item\s+|$)",
+                text,
+            )
+            if cc_match:
+                section = cc_match.group(0)
+                total_val = _extract_total_from_section(section)
+                if total_val:
+                    total_obligations = total_val
+                    found_any = True
+                # Check for "Purchase Obligations" within the note
+                po = re.search(r"(?i)purchase\s+obligations?[\s\S]{0,500}", section)
+                if po and not found_any:
+                    val = _extract_largest_amount(po.group(0))
+                    if val:
+                        total_obligations = val
+                        found_any = True
+
+        # Strategy 3: Direct "Purchase Obligations" line (anywhere)
+        if not found_any:
+            po_match = re.search(r"(?i)purchase\s+obligations?[\s\S]{0,500}?(?=total|due|\$)", text)
+            if po_match:
+                val = _extract_largest_amount(po_match.group(0))
+                if val:
+                    total_obligations = val
+                    found_any = True
+
+        return total_obligations if found_any and total_obligations > 0 else None
+
+    # =========================================================================
+    # LEGAL / REGULATORY FRESHNESS CHECK (V10)
+    # =========================================================================
+
+    def get_legal_regulatory_status(self, ticker: str) -> dict[str, Any]:
+        """
+        Check legal/regulatory freshness from SEC filings.
+        V10: must have verifiable development within 90 days.
+        """
+        cache_key = f"legal:{ticker.upper()}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return cached
+
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        ninety_days_ago = now - timedelta(days=90)
+
+        result = {
+            "ticker": ticker.upper(),
+            "fresh": False,
+            "latest_date": None,
+            "source": None,
+            "details": "No legal/regulatory data found within 90 days",
+            "status": "not_checked",
+        }
+
+        def _fetch_txt_content(ticker_inner: str, filing_type: str) -> str | None:
+            """Helper: fetch full TXT from SEC for a filing type."""
+            filings_inner = self.get_sec_filings_list(ticker_inner, filing_type, limit=1)
+            if not filings_inner or "error" in (filings_inner[0] if filings_inner else {}):
+                return None
+            f = filings_inner[0]
+            cik_str = f.get("cik") or self._get_cik(ticker_inner)
+            acc = f.get("accession_number")
+            if not cik_str or not acc:
+                return None
+            acc_clean = acc.replace("-", "")
+            txt_url = (
+                f"https://www.sec.gov/Archives/edgar/data/{int(cik_str)}/"
+                f"{acc_clean}/{acc}.txt"
+            )
+            try:
+                r = self._sync_client.get(txt_url, headers={"User-Agent": "NexusAgent/1.0 (Research)"})
+                if r.status_code == 200:
+                    # Search Item 3 in the first 30% of the filing (where legal proceedings live)
+                    section_end = len(r.text) // 3
+                    return r.text[:section_end]
+            except Exception:
+                pass
+            return None
+
+        def _check_filing(filing_type: str) -> bool:
+            """Check a specific filing type for legal dates."""
+            content = _fetch_txt_content(ticker, filing_type)
+            if not content:
+                return False
+            legal_text = self._extract_legal_proceedings(content)
+            if not legal_text:
+                return False
+            dates = self._extract_dates(legal_text)
+            if not dates:
+                return False
+            latest = max(dates)
+            result["latest_date"] = latest.strftime("%Y-%m-%d")
+            result["details"] = legal_text[:500].replace("\n", " ").strip()
+            result["source"] = f"SEC {filing_type} Item 3"
+            result["fresh"] = latest >= ninety_days_ago
+            result["status"] = "fresh" if result["fresh"] else "stale"
+            return result["fresh"]
+
+        try:
+            # Strategy 1: 10-K Item 3
+            if _check_filing("10-K"):
+                self.cache.set(cache_key, result, ttl=3600)
+                return result
+
+            # Strategy 2: 10-Q fallback
+            if _check_filing("10-Q"):
+                self.cache.set(cache_key, result, ttl=3600)
+                return result
+
+            if not result.get("latest_date"):
+                result["status"] = "legal_section_not_found"
+            else:
+                result["status"] = "stale"
+
+            self.cache.set(cache_key, result, ttl=3600)
+            return result
+
+        except Exception as e:
+            result["status"] = f"error: {str(e)[:100]}"
+            self.cache.set(cache_key, result, ttl=3600)
+            return result
+
+    @staticmethod
+    def _extract_legal_proceedings(text: str) -> str | None:
+        """Extract Item 3 (Legal Proceedings) body from 10-K. Strips HTML."""
+        import re
+
+        clean = FreeFinanceAPI._strip_html(text)
+
+        # Skip the TOC section (first ~60000 chars) to find actual body content
+        # The TOC has brief entries like "Item 3. Legal Proceedings 24"
+        # The body has actual paragraphs describing litigation
+        body_start = max(60000, len(clean) // 10)
+        body = clean[body_start:]
+
+        # Search for legal proceedings content in the body section
+        patterns = [
+            r"(?i)item\s+3\.?\s*legal\s+proceedings[\s\S]{0,8000}?(?=item\s+4|item\s+5)",
+            r"(?i)legal\s+proceedings[\s\S]{0,5000}?(?=item\s+\d|PART\s+II)",
+        ]
+        for pat in patterns:
+            m = re.search(pat, body)
+            if m:
+                section = m.group(0)
+                # Verify this is substantive content (not just TOC page numbers)
+                if len(section) > 200 and re.search(r'\b[a-z]{4,}\b', section):
+                    return section
+
+        # Fallback: find any substantive "Legal Proceedings" section
+        for m in re.finditer(r"(?i)legal\s+proceedings?\s*", body):
+            start = m.start()
+            # Skip if it looks like TOC (just digits after)
+            after = body[start:start+200]
+            if re.match(r'^.{0,50}\d{1,3}\s*$', after) and len(after.strip()) < 20:
+                continue
+            # Take the next 3000 chars as the legal section
+            section = body[start:start+5000]
+            if len(section) > 200:
+                end = re.search(r"(?=item\s+\d|PART\s+II|$)", section)
+                if end:
+                    section = section[:end.start()]
+                return section.strip()
+
+        return None
+
+    @staticmethod
+    def _extract_dates(text: str) -> list:
+        """Extract all dates from a text block."""
+        import re
+        from datetime import datetime
+
+        dates = []
+        pattern1 = (
+            r"(?i)(january|february|march|april|may|june|july|august|"
+            r"september|october|november|december)\s+\d{1,2},?\s+\d{4}"
+        )
+        for m in re.finditer(pattern1, text):
+            try:
+                dt = datetime.strptime(m.group(0).replace(",", "").strip(), "%B %d %Y")
+                dates.append(dt)
+            except ValueError:
+                pass
+
+        pattern2 = r"\d{4}-\d{2}-\d{2}"
+        for m in re.finditer(pattern2, text):
+            try:
+                dt = datetime.strptime(m.group(0), "%Y-%m-%d")
+                dates.append(dt)
+            except ValueError:
+                pass
+
+        pattern3 = r"\d{2}/\d{2}/\d{4}"
+        for m in re.finditer(pattern3, text):
+            try:
+                dt = datetime.strptime(m.group(0), "%m/%d/%Y")
+                dates.append(dt)
+            except ValueError:
+                try:
+                    dt = datetime.strptime(m.group(0), "%d/%m/%Y")
+                    dates.append(dt)
+                except ValueError:
+                    pass
+
+        return dates
 
     @staticmethod
     def _safe_float(value) -> float | None:

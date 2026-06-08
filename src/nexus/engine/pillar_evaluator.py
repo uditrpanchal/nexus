@@ -234,8 +234,8 @@ class StockPillarEvaluator:
                         score -= 0.5
             else:
                 score -= 0.5
-        roic = metrics.get("roe")
-        if roic and roic < 0.05:
+        roic = metrics.get("roic") or metrics.get("roe")
+        if roic is not None and roic < 0.05:
             score -= 0.25
         score = max(1.0, min(5.0, score))
         math_track = f"base=3.0 + D/E({de_ratio}) + SBC_drag + ROIC({roic}) = {score:.2f}"
