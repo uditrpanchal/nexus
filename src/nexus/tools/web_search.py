@@ -145,6 +145,8 @@ class WebSearchRouter:
         Uses duckduckgo_search library or direct HTTP as fallback.
         """
         try:
+            import warnings
+            warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
             from duckduckgo_search import DDGS
             with DDGS() as ddgs:
                 raw = list(ddgs.text(query, max_results=max_results))

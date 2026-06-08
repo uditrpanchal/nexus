@@ -100,11 +100,11 @@ class Agent:
         self.config = config
         self.tool_registry = ToolRegistry()
         self.llm = LLMProvider(config)
-        self.system_prompt = self._build_system_prompt()
         self._messages: list[LLMMessage] = []
         self._compaction_failures = 0
         self._memory_manager = None
         self._init_memory()
+        self.system_prompt = self._build_system_prompt()
 
     def _init_memory(self):
         """Initialize the memory manager for persistent context."""
