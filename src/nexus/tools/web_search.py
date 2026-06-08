@@ -146,8 +146,10 @@ class WebSearchRouter:
         """
         try:
             import warnings
-            warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
+            # Suppress rename warning (duckduckgo_search → ddgs)
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
             from duckduckgo_search import DDGS
+            warnings.filterwarnings("default", category=RuntimeWarning)
             with DDGS() as ddgs:
                 raw = list(ddgs.text(query, max_results=max_results))
                 return [

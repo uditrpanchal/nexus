@@ -32,20 +32,40 @@ class FreeFinanceAPI:
 
     def __init__(self, cache_ttl: int = 300):
         self.cache = Cache(default_ttl=cache_ttl)
-        self._client = httpx.AsyncClient(
-            timeout=30.0,
-            follow_redirects=True,
-            headers={
-                "User-Agent": "NexusAgent/1.0 (Financial Research)"
-            }
-        )
-        self._sync_client = httpx.Client(
-            timeout=30.0,
-            follow_redirects=True,
-            headers={
-                "User-Agent": "NexusAgent/1.0 (Financial Research)"
-            }
-        )
+        # Lazily initialized clients — created on first use, cleaned up on close
+        self._client: httpx.AsyncClient | None = None
+        self._sync_client: httpx.Client | None = None
+
+    @property
+    def async_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=30.0, follow_redirects=True,
+                headers={"User-Agent": "NexusAgent/1.0 (Financial Research)"},
+            )
+        return self._client
+
+    @property
+    def sync_client(self) -> httpx.Client:
+        if self._sync_client is None:
+            self._sync_client = httpx.Client(
+                timeout=30.0, follow_redirects=True,
+                headers={"User-Agent": "NexusAgent/1.0 (Financial Research)"},
+            )
+        return self._sync_client
+
+    def close(self):
+        """Clean up HTTP clients to avoid ResourceWarning on unclosed sockets."""
+        if self._client is not None:
+            import asyncio
+            try:
+                asyncio.create_task(self._client.aclose())
+            except Exception:
+                pass
+            self._client = None
+        if self._sync_client is not None:
+            self._sync_client.close()
+            self._sync_client = None
 
     # =========================================================================
     # PRICE DATA
@@ -645,7 +665,7 @@ class FreeFinanceAPI:
 
             # Fallback: scrape OpenInsider
             url = f"http://openinsider.com/screener?s={ticker}&o=&pl=&ph=&ll=&lh=&fd=730&fdr=&td=0&tdr=&fdlyl=&fdlyh=&daysago=&xp=1&xs=1&vl=&vh=&ocl=&och=&sic1=-1&sicl=100&sich=9999&grp=0&nfl=&nfl1=&nocaps&sortcol=0&cnt={limit}&page=1"
-            resp = self._sync_client.get("http://openinsider.com", headers={"User-Agent": "Mozilla/5.0"})
+            resp = self.sync_client.get("http://openinsider.com", headers={"User-Agent": "Mozilla/5.0"})
             return []  # OpenInsider scraping is complex; return yfinance data for now
         except Exception as e:
             return [{"error": str(e)}]
@@ -775,7 +795,7 @@ class FreeFinanceAPI:
             # Use SEC Submissions API (reliable, no key needed)
             url = f"https://data.sec.gov/submissions/CIK{cik}.json"
             headers = {"User-Agent": "NexusAgent/1.0 (Research)"}
-            resp = self._sync_client.get(url, headers=headers)
+            resp = self.sync_client.get(url, headers=headers)
 
             if resp.status_code != 200:
                 return self._fallback_filings(ticker, filing_type, limit)
@@ -841,7 +861,7 @@ class FreeFinanceAPI:
                 f"https://www.sec.gov/Archives/edgar/data/{cik_num}/"
                 f"{acc_clean}/{accession_number}.txt"
             )
-            resp = self._sync_client.get(txt_url, headers=headers)
+            resp = self.sync_client.get(txt_url, headers=headers)
 
             if resp.status_code != 200:
                 # Fallback: try index page to find the document
@@ -849,7 +869,7 @@ class FreeFinanceAPI:
                     f"https://www.sec.gov/Archives/edgar/data/{cik_num}/"
                     f"{acc_clean}/{accession_number}-index.htm"
                 )
-                resp_idx = self._sync_client.get(index_url, headers=headers)
+                resp_idx = self.sync_client.get(index_url, headers=headers)
                 if resp_idx.status_code != 200:
                     return {"error": f"Could not fetch filing (HTTP {resp.status_code})"}
 
@@ -874,7 +894,7 @@ class FreeFinanceAPI:
                         f"https://www.sec.gov/Archives/edgar/data/{cik_num}/"
                         f"{acc_clean}/{doc_link}"
                     )
-                resp = self._sync_client.get(doc_link, headers=headers)
+                resp = self.sync_client.get(doc_link, headers=headers)
                 if resp.status_code != 200:
                     return {"error": f"Could not fetch filing document (HTTP {resp.status_code})"}
 
@@ -1261,7 +1281,7 @@ class FreeFinanceAPI:
                 f"{acc_clean}/{accession}.txt"
             )
             headers = {"User-Agent": "NexusAgent/1.0 (Research)"}
-            resp = self._sync_client.get(txt_url, headers=headers)
+            resp = self.sync_client.get(txt_url, headers=headers)
             if resp.status_code != 200:
                 result["status"] = f"fetch_failed_http_{resp.status_code}"
                 self.cache.set(cache_key, result, ttl=86400)
@@ -1442,7 +1462,7 @@ class FreeFinanceAPI:
                 f"{acc_clean}/{acc}.txt"
             )
             try:
-                r = self._sync_client.get(txt_url, headers={"User-Agent": "NexusAgent/1.0 (Research)"})
+                r = self.sync_client.get(txt_url, headers={"User-Agent": "NexusAgent/1.0 (Research)"})
                 if r.status_code == 200:
                     # Search Item 3 in the first 30% of the filing (where legal proceedings live)
                     section_end = len(r.text) // 3
@@ -1599,7 +1619,7 @@ class FreeFinanceAPI:
 
         try:
             url = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={}&type=&dateb=&owner=include&count=10&output=atom"
-            resp = self._sync_client.get(url.format(ticker), headers={"User-Agent": "NexusAgent/1.0"})
+            resp = self.sync_client.get(url.format(ticker), headers={"User-Agent": "NexusAgent/1.0"})
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, "xml")
                 cik_tag = soup.find("cik")
@@ -1620,7 +1640,7 @@ class FreeFinanceAPI:
 
         try:
             url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-            resp = self._sync_client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            resp = self.sync_client.get(url, headers={"User-Agent": "Mozilla/5.0"})
             soup = BeautifulSoup(resp.text, "html.parser")
             table = soup.find("table", {"id": "constituents"})
             tickers = []
@@ -1657,7 +1677,7 @@ class FreeFinanceAPI:
         """Scrape FinanceCharts.com for supplementary data."""
         try:
             url = f"https://financecharts.com/stocks/{ticker}/financials/{metric}"
-            resp = self._sync_client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            resp = self.sync_client.get(url, headers={"User-Agent": "Mozilla/5.0"})
             if resp.status_code == 200:
                 return {"url": url, "status": "fetched", "length": len(resp.text)}
             return {"error": f"HTTP {resp.status_code}"}
@@ -1669,7 +1689,7 @@ class FreeFinanceAPI:
         try:
             encoded = quote(metric.replace("_", "-"))
             url = f"https://www.macrotrends.net/stocks/charts/{ticker}/{encoded}"
-            resp = self._sync_client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            resp = self.sync_client.get(url, headers={"User-Agent": "Mozilla/5.0"})
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, "html.parser")
                 tables = soup.find_all("table")
