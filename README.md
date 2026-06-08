@@ -2,9 +2,9 @@
 
 ## Overview
 
-**NEXUS** — the central binding point between data and investment decision. A bulletproof, zero-cost automated investment analysis engine. It programmatically executes the Universal Investment Analysis Framework — a complete analytical lifecycle covering red flag detection, pillar evaluation, weighted scorecard computation, and output validation — using only free data sources.
+**NEXUS** — an autonomous financial research agent that runs entirely on free data sources. It programmatically executes the **V10 Universal Investment Analysis Framework**: a complete analytical lifecycle covering red flag detection, pillar evaluation, weighted scorecard computation, off-balance sheet analysis, legal freshness checks, and output validation — using only zero-cost public data.
 
-Built with architectural patterns from [dexter](https://github.com/virattt/dexter) (multi-agent execution loops, micro-compaction, concurrent tool execution), nexus delivers institutional-grade stock and ETF analysis with no paid API keys, no paywalls, and full arithmetic transparency.
+Built with architectural patterns from [dexter](https://github.com/virattt/dexter), NEXUS delivers institutional-grade stock and ETF analysis with no paid API keys, no paywalls, and full arithmetic transparency.
 
 **No API keys required. No premium data subscriptions. 100% free data sources.**
 
@@ -22,7 +22,8 @@ nexus is organized as a decoupled, modular pipeline where each phase operates in
 │              │    │                  │    │                       │
 │  yfinance    │    │  RF1: Rev/NI     │    │  8 Stock Pillars      │
 │  SEC EDGAR   │    │  RF2: D/E + ICR  │    │  7 ETF Pillars        │
-│  Web Scrape  │    │  RF3: TTM FCF    │    │                       │
+│  WACC Table  │    │  RF3: SBC-adj FCF│    │                       │
+│  Web Scrape  │    │  RF4: ROIC<WACC  │    │                       │
 └──────────────┘    └──────────────────┘    └───────────┬───────────┘
                                                         │
                                                         ▼
@@ -57,7 +58,8 @@ graph TD
     DATA --> RF[Red Flag Scanner]
     RF --> RF1[RF1: Revenue & NI Decline]
     RF --> RF2[RF2: Debt/Equity + Interest Coverage]
-    RF --> RF3[RF3: TTM Free Cash Flow]
+    RF --> RF3[RF3: SBC-Adjusted FCF]
+    RF --> RF4[RF4: ROIC < WACC]
     
     RF --> PILLARS[Pillar Evaluation Engine]
     PILLARS --> STOCK[8 Stock Pillars]
@@ -91,7 +93,7 @@ src/nexus/
 │
 ├── engine/                  # ★ Core Analysis Engine (NEW)
 │   ├── __init__.py
-│   ├── red_flag_scanner.py  # Automated 3-flag risk detection
+│   ├── red_flag_scanner.py  # Automated 4-flag V10 risk detection
 │   ├── pillar_evaluator.py  # 8 Stock + 7 ETF pillar evaluation
 │   ├── scorecard.py         # Weighted scoring tables + math tracking
 │   └── validation_gate.py   # Pre-report output verification
@@ -116,54 +118,58 @@ All data comes from zero-cost sources — no premium or paywalled API integratio
 
 | Source | Data | Method |
 |--------|------|--------|
-| **Yahoo Finance** (yfinance) | Prices, financials, ratios, earnings, news, insider trades, analyst targets | Python library |
-| **SEC EDGAR** | 10-K, 10-Q, 8-K filings, CIK lookup | Direct HTTP |
+| **Yahoo Finance** (yfinance) | Prices, financials, ratios, earnings, news, insider trades, analyst targets, ETF bid/ask | Python library |
+| **SEC EDGAR** | 10-K, 10-Q, 8-K filings, CIK lookup, off-balance sheet footnotes, legal proceedings | Direct HTTP + iXBRL parsing |
+| **Sector WACC Table** | WACC estimation by sector with company-specific adjustments | Local `.heon/sector-wacc.md` lookup |
+| **DuckDuckGo** (keyless) | Web search for supplementary research | Free API |
 | **Web Scraping** | Supplementary data (FinanceCharts, Macrotrends) | httpx + BeautifulSoup |
 
 Data is cached with TTL-based file storage to minimize API calls.
 
-### 2. Automated Red Flag Scanner
+### 2. Automated Red Flag Scanner (V10)
 
-Three sequential checks run on every stock analysis:
+Four sequential checks run on every stock analysis — including **Capital Destruction (RF4)** and **SBC-adjusted FCF (RF3)**:
 
-| Flag | Description | Threshold | Deduction |
-|------|-------------|-----------|-----------|
-| **RF1** | Revenue & Net Income Decline | Both declining in 2+ of last 3 QoQ comparisons | — |
-| **RF2** | Balance Sheet Stress | D/E > 2.0 **AND** ICR < 1.5 simultaneously | — |
-| **RF3** | Negative Free Cash Flow | TTM FCF (OCF − CapEx) < 0 | — |
+| Flag | Description | Threshold | Penalty |
+|------|-------------|-----------|---------|
+| **RF1** | Revenue & Net Income Decline | 3+ consecutive dual-declines **OR** 2+ earnings misses | Counted |
+| **RF2** | Balance Sheet Stress | D/E > 2.0 **AND** ICR < 1.5 simultaneously | Counted |
+| **RF3** | Poor Cash Flow Quality | OCF negative 2+ quarters **OR** Adjusted FCF (OCF − CapEx − SBC) negative TTM | Counted |
+| **RF4** | Capital Destruction (NEW) | ROIC < WACC — negative Economic Spread | Counted |
 
-**Scorecard deductions:**
+**V10 Penalty Schedule:**
 - 0 flags: No deduction
-- 1 flag: −0.5 from final score
-- 2 flags: −1.0 from final score
-- 3 flags: **Automatic AVOID** — overrides all pillar scores
+- 1 flag: **No penalty** (note in verdict)
+- 2 flags: **−1.0** from final score + downgrade rating tier
+- 3 flags: **−2.0** from final score + downgrade 2 tiers
+- 4 flags: **Automatic AVOID** — overrides all pillar scores
 
 ### 3. Pillar Evaluation Engine
 
-#### 8 Stock Pillars
+#### 8 Stock Pillars (V10 Weights)
 
 | # | Pillar | Weight | Key Metrics |
 |---|--------|--------|-------------|
-| 1 | Business Quality | 15% | Gross margin, operating margin, ROE, revenue consistency |
-| 2 | Management | 15% | Insider ownership, institutional conviction, capital allocation |
-| 3 | Financial Strength | 15% | D/E, current ratio, FCF reconciliation (manual OCF−CapEx verification) |
-| 4 | Valuation | 15% | P/E, PEG, P/B, analyst target upside |
-| 5 | Circle of Competence | 10% | Sector clarity, business model simplicity |
-| 6 | Long-Term Outlook | 10% | Revenue/earnings growth, multi-year trend |
-| 7 | Risk Assessment | 10% | Beta, drawdown from 52w high, market cap size |
-| 8 | Temperament Test | 10% | 5-question behavioral assessment via objective proxies |
+| 1 | Business Quality | **20%** | Moat type, competitive position, gross/operating margins, revenue consistency |
+| 2 | Management Integrity | 15% | Insider ownership, capital allocation track record, insider trading patterns |
+| 3 | Financial Strength | **20%** | SBC-adjusted FCF, **Economic Spread (ROIC − WACC)**, D/E, SBC drag % |
+| 4 | Valuation & MoS | **20%** | P/E, P/FCF, EV/EBITDA, P/B vs historical/peers, **Margin of Safety calculation** |
+| 5 | Circle of Competence | 10% | Business understandability, **IN / EDGE / OUTSIDE declaration** |
+| 6 | Long-Term Outlook | 10% | Revenue/earnings growth, secular tailwinds, **10-year projection** |
+| 7 | Risk Assessment | **5%** | Beta, **off-balance sheet commitment ratio**, drawdown, **legal/regulatory freshness** |
+| 8 | Temperament Test | **0%** | **Qualitative gate** — 5-question proxy assessment; **FAIL overrides to AVOID** |
 
-#### 7 ETF Pillars
+#### 7 ETF Pillars (V10)
 
 | # | Pillar | Weight | Key Metrics |
 |---|--------|--------|-------------|
-| 1 | Expense Ratio | 20% | Annual expense ratio vs category |
-| 2 | Tracking Error | 15% | Beta deviation from benchmark |
-| 3 | Liquidity | 15% | AUM, average volume |
-| 4 | Holdings Quality | 15% | Diversification, top-10 concentration |
-| 5 | Tax Efficiency | 15% | Category-based turnover assessment |
-| 6 | Methodology | 10% | Index construction transparency |
-| 7 | Fit Assessment | 10% | AUM stability, category alignment |
+| 1 | Index Quality & Construction | **20%** | Exact index, selection/weighting method, rebalance cost |
+| 2 | Cost Efficiency & Frictional Drag | **25%** | Expense ratio, **bid-ask spread (bps)**, total cost of ownership vs peers |
+| 3 | Tracking Quality & Counterparty Risk | **15%** | Tracking difference, replication method, **synthetic swap check** |
+| 4 | Liquidity & Fund Size | **15%** | AUM, average volume, closure risk assessment |
+| 5 | Tax Efficiency | **10%** | 5-year cap gains history, **optimal tax wrapper recommendation** |
+| 6 | Diversification & Exposure Quality | **10%** | Holdings count, top-10 concentration, sector/geo allocation |
+| 7 | Strategy Fit & Portfolio Role | **5%** | ETF type classification, suitability assessment |
 
 ### 4. Scorecard & Arithmetic Module
 
@@ -176,16 +182,16 @@ FINAL_SCORE = 69.00% + (0.0 * 10) = 69.00%
 VERDICT: WATCH | RATING: ★★★ | SCORE: 69.00%
 ```
 
-**Verdict thresholds:**
-- **BUY:** ≥ 70% **and** 0 red flags
+**V10 Verdict thresholds:**
+- **BUY:** ≥ 70% **and** 0 red flags **and** Temperament PASS
 - **WATCH:** 50–69% **or** 1 red flag (BUY score + 1 flag → WATCH)
-- **AVOID:** < 50% **or** 2+ red flags **or** 3-flag override
+- **AVOID:** < 50% **or** 2+ red flags **or** 4-flag override **or** Temperament FAIL
 
 ### 5. Validation Gate
 
 Before any report is generated, the validation gate auto-verifies:
 - All pillars present with valid scores (1.0–5.0)
-- All 3 red flags checked with valid status
+- All **4** red flags checked with valid status
 - Weighted score arithmetic is internally consistent
 - Scorecard math tracking strings present
 - No null/None values in critical paths
@@ -280,12 +286,13 @@ uv run python -m pytest tests/ -v --cov=nexus.engine --cov=nexus.orchestrator
 
 ## Design Philosophy
 
-1. **Zero-cost data:** No premium API keys. yfinance + SEC EDGAR + web scraping.
+1. **Zero-cost data:** No premium API keys. yfinance + SEC EDGAR + sector WACC table + web scraping.
 2. **Deterministic engine:** The analysis pipeline is fully programmatic — no LLM calls in the engine layer. The LLM agent sits above for user interaction.
-3. **Math transparency:** Every score computation has a verifiable arithmetic tracking string.
-4. **Gate before output:** The validation gate must pass at 100% before any report is generated.
-5. **Dexter-inspired architecture:** Concurrent tool execution, micro-compaction, scratchpad tracking, multi-provider LLM support.
-6. **Decoupled modules:** Each phase (data, flags, pillars, scorecard, validation) operates independently with clear contracts.
+3. **V10 institutional adjustments:** SBC-adjusted FCF, true ROIC calculation, Economic Spread (ROIC − WACC), off-balance sheet commitment ratio, legal/regulatory freshness checks.
+4. **Math transparency:** Every score computation has a verifiable arithmetic tracking string.
+5. **Gate before output:** The validation gate must pass at 100% before any report is generated.
+6. **Dexter-inspired architecture:** Concurrent tool execution, micro-compaction, scratchpad tracking, multi-provider LLM support.
+7. **Decoupled modules:** Each phase (data, flags, pillars, scorecard, validation) operates independently with clear contracts.
 
 ## License
 
