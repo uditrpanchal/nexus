@@ -288,6 +288,36 @@ Returns a complete markdown report with scores, red flags, and verdict.""",
             func=self._run_full_analysis,
         )
 
+        # --- NEW: Web search tool (DuckDuckGo free + Tavily/SearXNG fallback) ---
+        self._register(
+            name="web_search",
+            description="Search the web using free providers (DuckDuckGo primary, Tavily/SearXNG fallback). Returns up to 5 results with titles, URLs, and snippets. Use for supplementary research, news, and data not available via financial tools.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "max_results": {"type": "integer", "description": "Max results (default: 5)", "default": 5},
+                },
+                "required": ["query"],
+            },
+            func=self._web_search,
+        )
+
+        # --- NEW: SEC Filings Reader ---
+        self._register(
+            name="read_filings",
+            description="Extract structural sections from SEC filings: Item 1 (Business Overview), Item 1A (Risk Factors), Item 7/MD&A. Supports 10-K, 10-Q, 8-K. Provide filing text content to parse.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "filing_text": {"type": "string", "description": "Raw SEC filing HTML/text content"},
+                    "filing_type": {"type": "string", "description": "Filing type: 10-K, 10-Q, or 8-K. Default: 10-K", "default": "10-K"},
+                },
+                "required": ["filing_text"],
+            },
+            func=self._read_filings,
+        )
+
     def _register(self, name: str, description: str, parameters: dict, func: ToolFunc):
         """Register a tool with its schema and implementation."""
         self._tools[name] = {
@@ -392,3 +422,17 @@ Returns a complete markdown report with scores, red flags, and verdict.""",
         # Return summary + report
         summary = pipeline.generate_summary()
         return f"{summary}\n\n---\n\n{report}"
+
+    async def _web_search(self, query: str, max_results: int = 5) -> list:
+        """Search the web using the free fallback router."""
+        try:
+            from .web_search import search_web
+            return await search_web(query, max_results)
+        except ImportError:
+            from nexus.tools.web_search import search_web
+            return await search_web(query, max_results)
+
+    async def _read_filings(self, filing_text: str, filing_type: str = "10-K") -> dict:
+        """Parse SEC filing sections."""
+        from .read_filings import parse_filing
+        return parse_filing(filing_text, filing_type)

@@ -100,65 +100,120 @@ class Agent:
         self.config = config
         self.tool_registry = ToolRegistry()
         self.llm = LLMProvider(config)
-        self.system_prompt = self._build_system_prompt()
         self._messages: list[LLMMessage] = []
+        self._compaction_failures = 0
+        self._memory_manager = None
+        self._init_memory()
+        self.system_prompt = self._build_system_prompt()
+
+    def _init_memory(self):
+        """Initialize the memory manager for persistent context."""
+        try:
+            from .memory.manager import MemoryManager
+            self._memory_manager = MemoryManager()
+        except Exception:
+            self._memory_manager = None
+
+    def _load_soul_document(self) -> str:
+        """Load SOUL.md from the project root."""
+        import os
+        soul_paths = [
+            os.path.join(os.path.dirname(__file__), "..", "..", "SOUL.md"),
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "SOUL.md"),
+            "SOUL.md",
+        ]
+        for p in soul_paths:
+            if os.path.exists(p):
+                with open(p, "r") as f:
+                    return f.read()
+        return "You are NEXUS, an autonomous financial research agent."
+
+    def _load_rules_document(self) -> str:
+        """Load RULES.md from the project root."""
+        import os
+        rules_paths = [
+            os.path.join(os.path.dirname(__file__), "..", "..", "RULES.md"),
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "RULES.md"),
+            "RULES.md",
+        ]
+        for p in rules_paths:
+            if os.path.exists(p):
+                with open(p, "r") as f:
+                    return f.read()
+        return ""
+
+    def _load_memory_context(self) -> str:
+        """Load persistent memory context for injection."""
+        if not self._memory_manager or not self._memory_manager.is_available():
+            return ""
+        ctx = self._memory_manager.load_session_context(max_tokens=1500)
+        return ctx.get("text", "").strip()
 
     def _build_system_prompt(self) -> str:
         from datetime import datetime
         now = datetime.now().strftime("%A, %B %d, %Y")
 
         tool_descriptions = self.tool_registry.get_compact_descriptions()
+        soul = self._load_soul_document()
+        rules = self._load_rules_document()
+        memory_ctx = self._load_memory_context()
 
-        return f"""You are NEXUS — an autonomous financial research agent with access to live market data.
+        # Build the complete system prompt
+        parts = [
+            f"""You are NEXUS — an autonomous financial research agent with access to live market data.
 Brand name: NEXUS
+Current date: {now}""",
+        ]
 
-Current date: {now}
+        # Inject soul document (identity + philosophy)
+        if soul:
+            parts.append(f"## Identity & Philosophy\n{soul}")
 
-You have access to these research tools:
+        # Inject rules (mandatory constraints)
+        if rules:
+            parts.append(f"## Research Constraints (MANDATORY)\n{rules}")
+
+        # Inject memory context
+        if memory_ctx:
+            parts.append(f"## Session Memory\n{memory_ctx}")
+
+        # Tool descriptions
+        parts.append(f"""## Available Tools
 {tool_descriptions}
 
 ## Primary Analysis Tool: run_full_analysis
 For ANY stock or ETF analysis request, use the **run_full_analysis** tool as your PRIMARY tool.
-It executes the complete programmatic pipeline: Data Ingestion → Red Flag Scanner →
-8 Pillar Evaluation (or 7 for ETFs) → Weighted Scorecard → Validation Gate → Report.
+It executes the complete programmatic pipeline: Data Ingestion -> Red Flag Scanner ->
+8 Pillar Evaluation (or 7 for ETFs) -> Weighted Scorecard -> Validation Gate -> Report.
 This gives you a complete, auto-verified analysis with arithmetic tracking strings.
-Use individual tools (get_price_snapshot, get_income_statements, etc.) only for
-specific supplementary queries — never for full analysis when run_full_analysis exists.
+Use individual tools only for specific supplementary queries.
 
 ## Tool Usage Policy
-- For any analysis request involving a ticker, call run_full_analysis FIRST
-- Use individual data tools only for follow-up or supplementary questions
-- Never hallucinate financial numbers — every claim must be backed by tool data
-- When using individual tools, call ONCE with the complete query whenever possible
-- All calculations (DCF, ratios) must be shown step-by-step in code blocks
-
-## Data Sources
-All data is fetched from FREE sources: Yahoo Finance (yfinance), SEC EDGAR, web scraping.
-No paid API keys are needed.
+- For analysis requests involving a ticker, call run_full_analysis FIRST
+- Never hallucinate financial numbers — every claim backed by tool data
+- All calculations must be shown step-by-step in code blocks
+- Use web_search for supplementary research (DuckDuckGo keyless, free)
+- Use read_filings to extract SEC filing sections (Item 1, 1A, MD&A)
 
 ## Analysis Framework
 The Universal Investment Analysis Framework runs automatically via run_full_analysis:
 1. Red Flag Scanner: 3 automated checks (revenue decline, D/E+ICR, TTM FCF)
-2. 8 Stock Pillars: Business Quality, Management, Financial Strength, Valuation,
-   Circle of Competence, Long-Term Outlook, Risk Assessment, Temperament Test
-3. 7 ETF Pillars: Expense Ratio, Tracking Error, Liquidity, Holdings Quality,
-   Tax Efficiency, Methodology, Fit Assessment
-4. Scorecard: Weighted computation with arithmetic tracking and BUY/WATCH/AVOID
-5. Validation Gate: Auto-verifies 100% completion before report
+2. 8 Stock Pillars (or 7 ETF Pillars) with weighted scoring
+3. Scorecard with arithmetic tracking and BUY/WATCH/AVOID verdict
+4. Validation Gate verifying 100% completion before report
 
-## Behavior
-- Be thorough but efficient — delegate to run_full_analysis for complete analyses
-- Show your work with specific numbers and sources when using individual tools
-- Use professional, objective tone
-- Format output in clear markdown with tables for comparisons
-- Never say "I cannot access real-time data" — your tools provide live data
+## Data Sources
+All data from FREE sources: Yahoo Finance (yfinance), SEC EDGAR, DuckDuckGo, web scraping.
+No paid API keys required.
 
 ## Response Format
 - Lead with a concise one-liner summary
 - Use markdown tables for financial comparisons
 - Bold key metrics for easy scanning
 - End with a clear verdict and rating
-"""
+""")
+
+        return "\\n\\n".join(parts)
 
     async def run(self, query: str) -> AsyncGenerator[AgentEvent, str]:
         """Main agent loop — yields events for real-time UI updates."""

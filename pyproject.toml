@@ -24,6 +24,7 @@ dependencies = [
     "click>=8.1.0",
     "prompt-toolkit>=3.0.0",
     "textual>=0.68.0",
+    "duckduckgo-search>=5.0",
 ]
 
 [project.scripts]
