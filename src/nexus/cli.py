@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -24,6 +25,15 @@ from rich.text import Text
 from .agent import Agent, AgentConfig, AgentEvent, EventType
 from .tools.formatting import format_full_analysis
 
+
+# Auto-load .env file from project root
+load_dotenv()
+
+# Fix Windows encoding for Rich emoji/unicode output
+if sys.platform == "win32":
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 console = Console()
 
