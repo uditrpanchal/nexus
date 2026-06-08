@@ -146,22 +146,21 @@ class WebSearchRouter:
         """
         try:
             import warnings
-            # Suppress rename warning (duckduckgo_search → ddgs)
-            warnings.filterwarnings("ignore", category=RuntimeWarning)
-            from duckduckgo_search import DDGS
-            warnings.filterwarnings("default", category=RuntimeWarning)
-            with DDGS() as ddgs:
-                raw = list(ddgs.text(query, max_results=max_results))
-                return [
-                    SearchResult(
-                        title=r.get("title", ""),
-                        url=r.get("href", r.get("link", "")),
-                        description=r.get("body", r.get("snippet", "")),
-                        provider="ddg",
-                        rank=i + 1,
-                    )
-                    for i, r in enumerate(raw)
-                ]
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                from duckduckgo_search import DDGS
+                with DDGS() as ddgs:
+                    raw = list(ddgs.text(query, max_results=max_results))
+                    return [
+                        SearchResult(
+                            title=r.get("title", ""),
+                            url=r.get("href", r.get("link", "")),
+                            description=r.get("body", r.get("snippet", "")),
+                            provider="ddg",
+                            rank=i + 1,
+                        )
+                        for i, r in enumerate(raw)
+                    ]
         except ImportError:
             pass
 
