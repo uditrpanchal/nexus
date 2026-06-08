@@ -1,0 +1,37 @@
+id,question,category,difficulty,expected_tools,scoring_rubric,min_score,max_score
+Q001,"What is the current price of AAPL and its 52-week range?",price,trivial,get_price_snapshot,"price_present=1,range_present=1",0,2
+Q002,"Calculate the TTM Free Cash Flow for MSFT using OCF minus CapEx.",cashflow,easy,get_cash_flow_statements,"math_shown=2,fcf_correct=2,four_quarters=1",0,5
+Q003,"Is GOOGL's debt-to-equity ratio above 2.0?",balance_sheet,easy,get_balance_sheets+get_key_metrics,"de_correct=2,threshold_compared=1",0,3
+Q004,"Analyze TSLA using the full NEXUS pipeline and report the verdict.",full_analysis,medium,run_full_analysis,"pipeline_complete=2,verdict_reported=1,red_flags_checked=1,pillars_all=1",0,5
+Q005,"What is NVDA's trailing P/E ratio and how does it compare to the industry?",valuation,medium,get_key_metrics,"pe_correct=1,industry_comparison=2",0,3
+Q006,"Extract the Risk Factors section from Amazon's most recent 10-K.",filings,hard,get_sec_filings+get_sec_filing_content,"filing_fetched=2,risk_section_extracted=2,source_cited=1",0,5
+Q007,"Compare the gross margins of AAPL, MSFT, and GOOGL over the last 3 years.",comparison,hard,get_income_statements_x3,"all_three_fetched=1,gm_calculated=2,trend_analyzed=2",0,5
+Q008,"Screen for S&P 500 stocks with P/E < 15 and revenue growth > 10%.",screening,medium,screen_stocks,"screen_executed=2,results_present=2,criteria_matched=1",0,5
+Q009,"What is the institutional ownership percentage of META?",ownership,easy,get_major_holders,"inst_pct_present=1,top_holders_listed=2",0,3
+Q010,"Calculate the PEG ratio for AMZN and assess if it suggests undervaluation.",valuation,medium,get_key_metrics,"peg_calculated=1,assessment_reasoned=2",0,3
+Q011,"Perform a DCF valuation for JPM with WACC sensitivity analysis.",dcf,hard,dcf-valuation+get_financials,"fcf_projected=2,wacc_reasoned=2,sensitivity_matrix=3,tv_capped=1,ev_validated=1",0,9
+Q012,"What are the last 8 quarters of earnings surprises for COST?",earnings,medium,get_earnings,"surprises_listed=2,trend_analyzed=1",0,3
+Q013,"Is VOO a good ETF investment? Run the full ETF pipeline.",etf,easy,run_full_analysis,"all_7_pillars=2,expense_analyzed=1,verdict_reported=1",0,4
+Q014,"Find any insider selling activity for TSLA in the last 6 months.",insider,medium,get_insider_trades,"trades_listed=2,sell_vs_buy_analyzed=1",0,3
+Q015,"What is the current analyst consensus and price target for AMD?",analyst,easy,get_analyst_data,"targets_present=1,consensus_reported=1",0,2
+Q016,"Calculate Apple's current ratio and quick ratio from the latest balance sheet.",liquidity,medium,get_balance_sheets,"ratios_calculated=2,math_shown=2",0,4
+Q017,"If BRK.B's revenue grew at 8% CAGR for 5 years, what would FY29 revenue be?",projection,easy,get_income_statements,"base_revenue_fetched=1,cagr_applied=2,math_shown=2",0,5
+Q018,"Identify 3 red flags for a company with declining revenue and negative FCF.",red_flags,medium,run_full_analysis,"rf1_checked=1,rf2_checked=1,rf3_checked=1,interpretation=2",0,5
+Q019,"What are the top 5 institutional holders of UNH and their recent activity?",institutional,medium,get_institutional_holders,"top5_listed=2,activity_analyzed=1",0,3
+Q020,"Compare VOO vs SPY on expense ratio, tracking error, and liquidity.",etf_comparison,hard,get_etf_data_x2,"both_fetched=1,expense_compared=2,tracking_compared=1,liquidity_compared=1",0,5
+Q021,"Write a buyside investment memo for a LONG position in NFLX.",memo,hard,write-memo,"variant_view=2,thesis_falsifiable=2,scenarios_prob_weighted=2,bear_steelmanned=2,asymmetry_checked=1,tripwires_observable=1",0,10
+Q022,"Does WMT's free cash flow cover its dividend payments over the last 3 years?",dividend,medium,get_cash_flow_statements+get_key_metrics,"fcf_fetched=1,dividends_fetched=1,coverage_calculated=2,trend=1",0,5
+Q023,"Calculate the enterprise value to EBITDA ratio for DIS and compare to sector median.",valuation,medium,get_key_metrics,"ev_ebitda_correct=1,sector_comparison=2",0,3
+Q024,"What is the beta and max drawdown from 52-week high for PLTR?",risk,easy,get_price_snapshot+get_key_metrics,"beta_present=1,drawdown_calculated=1",0,2
+Q025,"Analyze XOM using all 8 stock pillars and report the star rating.",full_analysis,medium,run_full_analysis,"all_8_pillars=3,star_rating_reported=1,math_tracking=1",0,5
+Q026,"Extract the MD&A section from Pfizer's most recent 10-K filing.",filings,hard,get_sec_filings+get_sec_filing_content,"filing_fetched=2,mda_extracted=2,relevant_content=1",0,5
+Q027,"What are the key differences between a 10-K and a 10-Q filing?",knowledge,trivial,none,"10k_described=1,10q_described=1,differences=1",0,3
+Q028,"Compute the Sharpe-like return/risk ratio for NVDA using 1-year historical data.",quant,hard,get_historical_prices,"returns_calculated=2,volatility_calculated=2,ratio_computed=1",0,5
+Q029,"What sector has the highest average gross margin in the S&P 500?",screening,hard,screen_stocks,"sectors_identified=2,margins_computed=2,conclusion=1",0,5
+Q030,"Estimate the intrinsic value of KO using a Gordon Growth Model.",dcf,medium,get_key_metrics+get_cash_flow_statements,"fcf_base=1,growth_rate_reasoned=2,wacc_reasoned=1,ggm_applied=1",0,5
+Q031,"Which of AAPL, MSFT, GOOGL has the best combined value score per NEXUS pillars?",comparison,hard,run_full_analysis_x3,"all_three_run=1,scores_compared=2,reasoning=2",0,5
+Q032,"What is the debt maturity profile and interest coverage trend for T?",credit,hard,get_balance_sheets+get_income_statements,"debt_fetched=1,icr_trend=2,maturity_analysis=2",0,5
+Q033,"If you had $100K to deploy, how would you size a position in JNJ per NEXUS framework?",portfolio,medium,run_full_analysis,"analysis_run=1,sizing_logic=2,kelly_or_similar=1,risk_awareness=1",0,5
+Q034,"What are the last 4 quarters of revenue by segment for GE?",segments,hard,get_income_statements,"quarterly_fetched=2,segments_broken=2,trend_analyzed=1",0,5
+Q035,"Detect if MMM shows any of the 3 V9 Red Flags using the free data pipeline.",red_flags,easy,run_full_analysis,"rf1_checked=1,rf2_checked=1,rf3_checked=1,conclusion=1",0,4
+Q036,"Calculate the P/B ratio for BAC and determine if it trades below book value.",valuation,easy,get_key_metrics,"pb_calculated=1,book_comparison=1",0,2
